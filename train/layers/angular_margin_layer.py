@@ -28,10 +28,10 @@ class AngularMarginLayer(tf.keras.layers.Layer):
         """
         input_shape = [shape of y_pred, shape of y_true] : list
         """
+        feature_dim = tf.TensorShape(input_shape[0]).as_list()[-1]
         self.center = tf.Variable(name='center',
-            initial_value=self.initializer((input_shape[0][-1], self.n_classes)),
+            initial_value=self.initializer((feature_dim, self.n_classes)),
             trainable=True)
-        # Updated mixed precision check for TF 2.19
         if tf.keras.mixed_precision.global_policy().name == 'mixed_float16':
             self.center = tf.cast(self.center, dtype=tf.float16)
             self.cos_m = tf.cast(self.cos_m, dtype=tf.float16)

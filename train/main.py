@@ -88,12 +88,11 @@ def build_callbacks(config, test_ds_dict):
         monitor='recall@1', factor=0.5, mode='max',
         patience=2, min_lr=1e-4, verbose=1)
     checkpoint = tf.keras.callbacks.ModelCheckpoint(
-        filepath='./checkpoints/{}/best'.format(config['model_name']),
+        filepath='./checkpoints/{}/best.keras'.format(config['model_name']),
         monitor='recall@1',
         mode='max',
         save_best_only=True,
         verbose=1)
-    # Updated for TF 2.19 - _supports_tf_logs is no longer needed
     early_stop = tf.keras.callbacks.EarlyStopping(
         monitor='recall@1',
         mode='max', patience=7,
@@ -106,12 +105,11 @@ def build_callbacks(config, test_ds_dict):
     if not config['lr_decay']:
         callback_list.append(reduce_lr)
     callback_list.append(tensorboard_log)
-    # Removed tensorflow_model_optimization callbacks
     return callback_list, early_stop
 
 
 def build_optimizer(config):
-    # Updated for TensorFlow 2.19
+    # In tf-v2.3.0, Do not use tf.keras.optimizers.schedules with ReduceLR callback.
     if config['lr_decay']:
         lr = tf.keras.optimizers.schedules.ExponentialDecay(
             config['lr'],
@@ -144,8 +142,7 @@ def restore_latest_checkpoint(net, checkpoint_path):
     print('\n---------------- Restore Checkpoint ----------------\n')
     if latest_path is not None:
         print('restore_latest_checkpoint:', latest_path)
-        # Updated for TF 2.19 - expect_partial() is deprecated
-        checkpoint.restore(latest_path)
+        checkpoint.restore(latest_path).expect_partial()
     else:
         print('Can not find latest checkpoint file:', checkpoint_path)
     print('\n----------------------------------------------------\n')
@@ -153,7 +150,6 @@ def restore_latest_checkpoint(net, checkpoint_path):
 def start_training(config):
     if config['mixed_precision']:
         print('---------------- Enabled Mixed Precision ----------------')
-        # Updated mixed precision policy for TF 2.19
         policy = tf.keras.mixed_precision.Policy('mixed_float16')
         tf.keras.mixed_precision.set_global_policy(policy)
     train_ds, test_ds_dict = build_dataset(config)
@@ -163,9 +159,7 @@ def start_training(config):
     train_net.compile(optimizer=opt)
     train_net.summary()
     try:
-        train_net.fit(train_ds, epochs=config['epoch'], verbose=1,
-            workers=input_pipeline.TF_AUTOTUNE,
-            callbacks=callbacks)
+        train_net.fit(train_ds, epochs=config['epoch'], verbose=1, callbacks=callbacks)
     except KeyboardInterrupt:
         print('--')
         if early_stop.best_weights is None:
@@ -174,7 +168,6 @@ def start_training(config):
             print('Training is canceled and weights are restored from the best')
             train_net.set_weights(early_stop.best_weights)
 
-    # Removed tensorflow_model_optimization pruning
     infer_model = train_net.get_inference_model()
     infer_model.save('{}.h5'.format(infer_model.name))
     train_net.backbone.save('{}_backbone.h5'.format(train_net.name))

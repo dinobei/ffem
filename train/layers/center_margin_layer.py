@@ -17,7 +17,7 @@ class CenterMarginLayer(tf.keras.layers.Layer):
         self.scale = scale
 
     def build(self, input_shape):
-        n_embeddings = input_shape[0][-1]
+        n_embeddings = tf.TensorShape(input_shape[0]).as_list()[-1]
         initializer = tf.keras.initializers.HeNormal()
         self.c = tf.Variable(name='centers',
             initial_value=initializer((self.num_classes, n_embeddings)),

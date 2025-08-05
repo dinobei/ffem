@@ -22,17 +22,31 @@ def random_color(x: tf.Tensor):
 def blur(x):
     choice = tf.random.uniform([], 0, 1, dtype=tf.float32)
     def gfilter(x):
-        # Use native TensorFlow gaussian filter
-        return tf.nn.depthwise_conv2d(
-            tf.expand_dims(x, 0),
-            tf.reshape(tf.constant([[[[1.0, 2.0, 1.0], [2.0, 4.0, 2.0], [1.0, 2.0, 1.0]]]]), [3, 3, 1, 1]),
-            strides=[1, 1, 1, 1],
-            padding='SAME'
-        )[0] / 16.0
+        # Gaussian filter using native TensorFlow
+        # Create a 5x5 Gaussian kernel
+        kernel = tf.constant([
+            [1, 4, 6, 4, 1],
+            [4, 16, 24, 16, 4],
+            [6, 24, 36, 24, 6],
+            [4, 16, 24, 16, 4],
+            [1, 4, 6, 4, 1]
+        ], dtype=tf.float32) / 256.0
+        
+        # Reshape kernel for depthwise convolution
+        kernel = tf.reshape(kernel, [5, 5, 1, 1])
+        kernel = tf.tile(kernel, [1, 1, 3, 1])
+        
+        # Apply convolution
+        x_expanded = tf.expand_dims(x, 0)  # Add batch dimension
+        x_filtered = tf.nn.depthwise_conv2d(x_expanded, kernel, strides=[1, 1, 1, 1], padding='SAME')
+        return x_filtered[0]  # Remove batch dimension
 
     def mfilter(x):
-        # Simple median-like filter using average pooling as approximation
-        return tf.nn.avg_pool2d(tf.expand_dims(x, 0), ksize=3, strides=1, padding='SAME')[0]
+        # Median filter approximation using average pooling
+        # This is a simplified approximation since true median filter is complex
+        x_expanded = tf.expand_dims(x, 0)  # Add batch dimension
+        x_pooled = tf.nn.avg_pool2d(x_expanded, ksize=3, strides=1, padding='SAME')
+        return x_pooled[0]  # Remove batch dimension
 
     return tf.cond(choice > 0.5, lambda: gfilter(x), lambda: mfilter(x))
 
@@ -47,7 +61,6 @@ def cutout(x: tf.Tensor):
             return x
         y = tf.random.uniform([], 0, h - size + 1, dtype=tf.int32)
         x_pos = tf.random.uniform([], 0, w - size + 1, dtype=tf.int32)
-        # 2D 마스크 생성
         mask2d = tf.ones([h, w], dtype=x.dtype)
         mask2d = tf.tensor_scatter_nd_update(
             mask2d,
@@ -55,7 +68,6 @@ def cutout(x: tf.Tensor):
                 tf.range(y, y + size), tf.range(x_pos, x_pos + size), indexing='ij'), axis=-1), [-1, 2]),
             tf.zeros([size * size], dtype=x.dtype)
         )
-        # 3D로 확장
         mask3d = tf.expand_dims(mask2d, axis=-1)
         mask3d = tf.tile(mask3d, [1, 1, tf.shape(x)[-1]])
         return x * mask3d

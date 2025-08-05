@@ -126,7 +126,7 @@ class GradientAccumulatorModel(tf.keras.Model):
             self.grad_accum[i].assign_add(avg_grad)
         # Updated for TF 2.19 - use tf.cond with proper function calls
         tf.cond(tf.equal(self.step_count, self.num_accum),
-            lambda: self.__apply_grads_and_init(), lambda: None)
+            self.__apply_grads_and_init, lambda: None)
 
     def __apply_grads_and_init(self):
         self.optimizer.apply_gradients(zip(self.grad_accum, self.trainable_variables))
