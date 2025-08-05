@@ -1,5 +1,4 @@
 import tensorflow as tf
-import tensorflow_addons as tfa
 
 
 TF_AUTOTUNE = tf.data.AUTOTUNE
@@ -23,25 +22,43 @@ def random_color(x: tf.Tensor):
 def blur(x):
     choice = tf.random.uniform([], 0, 1, dtype=tf.float32)
     def gfilter(x):
-        return tfa.image.gaussian_filter2d(x, [5, 5], 1.0, 'REFLECT', 0)
-
+        # Use native TensorFlow gaussian filter
+        return tf.nn.depthwise_conv2d(
+            tf.expand_dims(x, 0),
+            tf.reshape(tf.constant([[[[1.0, 2.0, 1.0], [2.0, 4.0, 2.0], [1.0, 2.0, 1.0]]]]), [3, 3, 1, 1]),
+            strides=[1, 1, 1, 1],
+            padding='SAME'
+        )[0] / 16.0
 
     def mfilter(x):
-        return tfa.image.median_filter2d(x, [5, 5], 'REFLECT', 0)
-
+        # Simple median-like filter using average pooling as approximation
+        return tf.nn.avg_pool2d(tf.expand_dims(x, 0), ksize=3, strides=1, padding='SAME')[0]
 
     return tf.cond(choice > 0.5, lambda: gfilter(x), lambda: mfilter(x))
 
 
-def cutout(x : tf.Tensor):
-
-    def _cutout(x : tf.Tensor):
-        const_rnd = tf.random.uniform([], 0., 1., dtype=tf.float32)
-        size = tf.random.uniform([], 0, 20, dtype=tf.int32)
-        size = size * 2
-        return tfa.image.random_cutout(x, (size, size), const_rnd)
-
-
+def cutout(x: tf.Tensor):
+    def _cutout(x: tf.Tensor):
+        h = tf.shape(x)[0]
+        w = tf.shape(x)[1]
+        size = tf.random.uniform([], 0, 20, dtype=tf.int32) * 2
+        size = tf.minimum(size, tf.minimum(h, w))
+        if size <= 0:
+            return x
+        y = tf.random.uniform([], 0, h - size + 1, dtype=tf.int32)
+        x_pos = tf.random.uniform([], 0, w - size + 1, dtype=tf.int32)
+        # 2D 마스크 생성
+        mask2d = tf.ones([h, w], dtype=x.dtype)
+        mask2d = tf.tensor_scatter_nd_update(
+            mask2d,
+            tf.reshape(tf.stack(tf.meshgrid(
+                tf.range(y, y + size), tf.range(x_pos, x_pos + size), indexing='ij'), axis=-1), [-1, 2]),
+            tf.zeros([size * size], dtype=x.dtype)
+        )
+        # 3D로 확장
+        mask3d = tf.expand_dims(mask2d, axis=-1)
+        mask3d = tf.tile(mask3d, [1, 1, tf.shape(x)[-1]])
+        return x * mask3d
     choice = tf.random.uniform([], 0., 1., dtype=tf.float32)
     return tf.cond(choice > 0.5, lambda: _cutout(x), lambda: x)
 

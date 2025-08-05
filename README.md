@@ -7,11 +7,18 @@ This project includes following implementations:
 
 ## Requirements
 ```
-tensorflow==2.4.1
-tensorflow-addons==0.12.1
-tensorflow-model-optimization==0.5.0
-numpy==1.19.5
+tensorflow>=2.19.0
+numpy>=1.24.0
 ```
+
+**Note**: This project has been updated to work with TensorFlow 2.19. The original version was developed for TensorFlow 2.4.1.
+
+## Major Updates for TensorFlow 2.19
+- Removed `tensorflow-addons` dependency and replaced with native TensorFlow operations
+- Updated mixed precision API calls
+- Fixed checkpoint restoration API
+- Updated optimizer and callback implementations
+- Replaced deprecated tensorflow_addons image operations with native TensorFlow equivalents
 
 ## How to Make Your Dataset
 You have image_list.json file with the format (json) as below.  
