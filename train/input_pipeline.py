@@ -52,27 +52,63 @@ def blur(x):
 
 
 def cutout(x: tf.Tensor):
-    def _cutout(x: tf.Tensor):
-        h = tf.shape(x)[0]
-        w = tf.shape(x)[1]
+    def _cutout_single_image(img: tf.Tensor):
+        # Get image dimensions for single image
+        h = tf.shape(img)[0]
+        w = tf.shape(img)[1]
+        c = tf.shape(img)[2]
+        
+        # Generate random size
         size = tf.random.uniform([], 0, 20, dtype=tf.int32) * 2
         size = tf.minimum(size, tf.minimum(h, w))
-        if size <= 0:
-            return x
-        y = tf.random.uniform([], 0, h - size + 1, dtype=tf.int32)
-        x_pos = tf.random.uniform([], 0, w - size + 1, dtype=tf.int32)
-        mask2d = tf.ones([h, w], dtype=x.dtype)
-        mask2d = tf.tensor_scatter_nd_update(
-            mask2d,
-            tf.reshape(tf.stack(tf.meshgrid(
-                tf.range(y, y + size), tf.range(x_pos, x_pos + size), indexing='ij'), axis=-1), [-1, 2]),
-            tf.zeros([size * size], dtype=x.dtype)
-        )
-        mask3d = tf.expand_dims(mask2d, axis=-1)
-        mask3d = tf.tile(mask3d, [1, 1, tf.shape(x)[-1]])
-        return x * mask3d
+        
+        # Check if size is valid
+        def apply_cutout():
+            # Generate random position
+            y = tf.random.uniform([], 0, h - size + 1, dtype=tf.int32)
+            x_pos = tf.random.uniform([], 0, w - size + 1, dtype=tf.int32)
+            
+            # Create 2D mask for single image
+            mask2d = tf.ones([h, w], dtype=img.dtype)
+            
+            # Create indices for the cutout region
+            y_range = tf.range(y, y + size)
+            x_range = tf.range(x_pos, x_pos + size)
+            
+            # Create meshgrid
+            y_grid, x_grid = tf.meshgrid(y_range, x_range, indexing='ij')
+            
+            # Flatten and stack indices
+            y_flat = tf.reshape(y_grid, [-1])
+            x_flat = tf.reshape(x_grid, [-1])
+            
+            # Stack indices
+            indices = tf.stack([y_flat, x_flat], axis=1)
+            
+            # Create zeros for the cutout region
+            zeros = tf.zeros([tf.shape(indices)[0]], dtype=img.dtype)
+            
+            # Apply cutout mask
+            mask2d = tf.tensor_scatter_nd_update(mask2d, indices, zeros)
+            
+            # Expand to 3D and broadcast to match image shape
+            mask3d = tf.expand_dims(mask2d, axis=-1)
+            mask3d = tf.broadcast_to(mask3d, [h, w, c])
+            
+            return img * mask3d
+        
+        def return_original():
+            return img
+        
+        # Apply cutout only if size > 0
+        return tf.cond(size > 0, apply_cutout, return_original)
+    
+    def _cutout_batch(batch_img: tf.Tensor):
+        # Apply cutout to each image in the batch
+        return tf.map_fn(_cutout_single_image, batch_img)
+    
     choice = tf.random.uniform([], 0., 1., dtype=tf.float32)
-    return tf.cond(choice > 0.5, lambda: _cutout(x), lambda: x)
+    return tf.cond(choice > 0.5, lambda: _cutout_batch(x), lambda: x)
 
 
 def make_tfdataset(train_tfrecord, test_tfrecord, batch_size, img_shape):
@@ -146,6 +182,7 @@ def make_tfdataset(train_tfrecord, test_tfrecord, batch_size, img_shape):
             num_parallel_calls=TF_AUTOTUNE)
     train_ds = train_ds.map(lambda x, label: (tf.clip_by_value(x, 0., 1.), label), num_parallel_calls=TF_AUTOTUNE)
     train_ds = train_ds.map(lambda x, label: (cutout(x), label), num_parallel_calls=TF_AUTOTUNE)
+    train_ds = train_ds.repeat()  # Add repeat to make dataset infinite
     train_ds = train_ds.prefetch(TF_AUTOTUNE)
 
     test_ds_dict = {}

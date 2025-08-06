@@ -19,9 +19,12 @@ class CenterMarginLayer(tf.keras.layers.Layer):
     def build(self, input_shape):
         n_embeddings = tf.TensorShape(input_shape[0]).as_list()[-1]
         initializer = tf.keras.initializers.HeNormal()
-        self.c = tf.Variable(name='centers',
-            initial_value=initializer((self.num_classes, n_embeddings)),
-            trainable=True)
+        self.c = self.add_weight(
+            name='centers',
+            shape=(self.num_classes, n_embeddings),
+            initializer=initializer,
+            trainable=True
+        )
         if tf.keras.mixed_precision.global_policy().name == 'mixed_float16':
             self.c = tf.cast(self.c, dtype=tf.float16)
 
