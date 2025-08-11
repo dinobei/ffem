@@ -25,13 +25,14 @@ class CenterMarginLayer(tf.keras.layers.Layer):
             initializer=initializer,
             trainable=True
         )
-        if tf.keras.mixed_precision.global_policy().name == 'mixed_float16':
-            self.c = tf.cast(self.c, dtype=tf.float16)
 
     def call(self, inputs):
         y_pred, y_true = inputs
+        current_dtype = y_pred.dtype
+        c = tf.cast(self.c, current_dtype)
+        
         norm_x = tf.math.l2_normalize(y_pred, axis=1)
-        norm_c = tf.math.l2_normalize(self.c, axis=1)
+        norm_c = tf.math.l2_normalize(c, axis=1)
         dist = pairwise_distance(norm_x, norm_c) * self.scale
         loss = tf.where(y_true == 1., dist, tf.zeros_like(dist))
         loss = tf.math.reduce_sum(loss, axis=1)

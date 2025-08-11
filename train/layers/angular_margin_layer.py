@@ -35,12 +35,6 @@ class AngularMarginLayer(tf.keras.layers.Layer):
             initializer=self.initializer,
             trainable=True
         )
-        if tf.keras.mixed_precision.global_policy().name == 'mixed_float16':
-            self.center = tf.cast(self.center, dtype=tf.float16)
-            self.cos_m = tf.cast(self.cos_m, dtype=tf.float16)
-            self.sin_m = tf.cast(self.sin_m, dtype=tf.float16)
-            self.th = tf.cast(self.th, dtype=tf.float16)
-            self.mm = tf.cast(self.mm, dtype=tf.float16)
 
     def call(self, inputs):
         """
@@ -49,12 +43,21 @@ class AngularMarginLayer(tf.keras.layers.Layer):
         y_true = (batch_size, classes) : shape
         """
         y_pred, y_true = inputs
+        
+        current_dtype = y_pred.dtype
+        center = tf.cast(self.center, current_dtype)
+        
+        cos_m = tf.cast(self.cos_m, current_dtype)
+        sin_m = tf.cast(self.sin_m, current_dtype)
+        th = tf.cast(self.th, current_dtype)
+        mm = tf.cast(self.mm, current_dtype)
+        
         normed_embds = tf.nn.l2_normalize(y_pred, axis=1)
-        normed_w = tf.nn.l2_normalize(self.center, axis=0)
+        normed_w = tf.nn.l2_normalize(center, axis=0)
         cos_t = tf.matmul(normed_embds, normed_w)
         sin_t = tf.sqrt(1. - cos_t ** 2)
-        cos_mt = cos_t * self.cos_m - sin_t * self.sin_m
-        cos_mt = tf.where(cos_t > self.th, cos_mt, cos_t - self.mm)
+        cos_mt = cos_t * cos_m - sin_t * sin_m
+        cos_mt = tf.where(cos_t > th, cos_mt, cos_t - mm)
         logits = tf.where(y_true == 1., cos_mt, cos_t)
         logits = logits * self.scale
         return logits
