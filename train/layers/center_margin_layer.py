@@ -31,11 +31,23 @@ class CenterMarginLayer(tf.keras.layers.Layer):
         current_dtype = y_pred.dtype
         c = tf.cast(self.c, current_dtype)
         
-        norm_x = tf.math.l2_normalize(y_pred, axis=1)
-        norm_c = tf.math.l2_normalize(c, axis=1)
+        if current_dtype == tf.float16:
+            y_pred = tf.cast(y_pred, tf.float32)
+            c = tf.cast(c, tf.float32)
+        
+        y_pred_norm = tf.clip_by_value(y_pred, -1e6, 1e6)
+        c_norm = tf.clip_by_value(c, -1e6, 1e6)
+        
+        norm_x = tf.math.l2_normalize(y_pred_norm, axis=1)
+        norm_c = tf.math.l2_normalize(c_norm, axis=1)
+        
         dist = pairwise_distance(norm_x, norm_c) * self.scale
         loss = tf.where(y_true == 1., dist, tf.zeros_like(dist))
         loss = tf.math.reduce_sum(loss, axis=1)
+        
+        if current_dtype == tf.float16:
+            loss = tf.cast(loss, current_dtype)
+        
         return loss
 
     def get_config(self):

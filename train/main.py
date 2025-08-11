@@ -121,12 +121,12 @@ def build_optimizer(config):
 
     opt_list = {
         'Adam': 
-            tf.keras.optimizers.Adam(learning_rate=lr),
+            tf.keras.optimizers.Adam(learning_rate=lr, clipnorm=1.0),
         'SGD':
             tf.keras.optimizers.SGD(learning_rate=lr,
-                momentum=0.9, nesterov=True),
+                momentum=0.9, nesterov=True, clipnorm=1.0),
         'AdamW': 
-            tf.keras.optimizers.AdamW(learning_rate=lr, weight_decay=1e-4),
+            tf.keras.optimizers.AdamW(learning_rate=lr, weight_decay=1e-4, clipnorm=1.0),
     }
     if config['optimizer'] not in opt_list:
         print(config['optimizer'], 'is not support.')
