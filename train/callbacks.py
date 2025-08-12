@@ -9,16 +9,20 @@ import tensorflow as tf
 class CustomProgressBar(tf.keras.callbacks.Callback):
     """처리량 정보를 포함한 커스텀 진행률바"""
     
-    def __init__(self):
+    def __init__(self, total_samples, batch_size):
         super(CustomProgressBar, self).__init__()
         self.epoch_start_time = None
         self.step_start_time = None
         self.last_batch = 0
+        self.total_samples = total_samples
+        self.batch_size = batch_size
+        self.steps_per_epoch = total_samples // batch_size
         
     def on_epoch_begin(self, epoch, logs=None):
         self.epoch_start_time = time.time()
         self.step_start_time = time.time()
         self.last_batch = 0
+        print(f"\n🚀 Epoch {epoch + 1}/40 - Steps per epoch: {self.steps_per_epoch}")
         
     def on_train_batch_end(self, batch, logs=None):
         if logs is None:
@@ -32,22 +36,30 @@ class CustomProgressBar(tf.keras.callbacks.Callback):
         step_time = current_time - self.step_start_time
         self.step_start_time = current_time
         
-        # 진행률바 업데이트 (기존 출력 대체)
-        if batch % 10 == 0:  # 10배치마다 업데이트
+        # 진행률바 업데이트 (10배치마다 업데이트)
+        if batch % 10 == 0:
             # 기존 진행률바 형식에 처리량 추가
             accuracy = logs.get('accuracy', 0.0)
             loss = logs.get('loss', 0.0)
             
-            # 진행률바 출력 (기존 형식 + 처리량)
-            progress_line = f"{batch}/Unknown {step_time:.0f}s {step_time:.1f}s/step - accuracy: {accuracy:.3e} - loss: {loss:.4f}"
+            # 에포크 진행률 계산
+            progress = (batch / self.steps_per_epoch) * 100
+            
+            # 진행률바 출력 (에포크 경계 포함)
+            progress_line = f"{batch}/{self.steps_per_epoch} ({progress:.1f}%) {step_time:.0f}s {step_time:.1f}s/step - accuracy: {accuracy:.3e} - loss: {loss:.4f}"
             if throughput:
                 progress_line += f" {throughput}"
             
             print(f"\r{progress_line}", end='', flush=True)
             self.last_batch = batch
+            
+            # 에포크 완료 시 줄바꿈
+            if batch >= self.steps_per_epoch - 1:
+                print()  # 줄바꿈
     
     def on_epoch_end(self, epoch, logs=None):
-        print()  # 줄바꿈
+        print(f"\n✅ Epoch {epoch + 1} completed!")
+        print()
 
 
 class LogCallback(tf.keras.callbacks.Callback):
@@ -118,13 +130,19 @@ class ThroughputCallback(tf.keras.callbacks.Callback):
             gpu_count = len(tf.config.list_physical_devices('GPU'))
             effective_batch_size = self.step_samples[0] * gpu_count if self.step_samples else 0
             
+            # 남은 에포크 예상 시간
+            remaining_epochs = 40 - (epoch + 1)  # config에서 가져와야 함
+            estimated_total_time = total_time * remaining_epochs
+            estimated_days = estimated_total_time / (24 * 3600)
+            
             print(f"\n📈 Epoch {epoch + 1} Performance Summary:")
-            print(f"  ⏱️  Total time: {total_time:.2f} seconds")
+            print(f"  ⏱️  Total time: {total_time:.2f} seconds ({total_time/3600:.2f} hours)")
             print(f"  📊 Total samples: {total_samples:,}")
             print(f"  🚀 Throughput: {samples_per_second:.1f} samples/second")
             print(f"  ⚡ Avg time per sample: {avg_time_per_sample*1000:.2f} ms")
             print(f"  🎯 Effective batch size: {effective_batch_size}")
             print(f"  🖥️  GPUs used: {gpu_count}")
+            print(f"  ⏳ Estimated remaining time: {estimated_days:.1f} days")
             
             # TensorBoard에 기록
             with self.writer.as_default():
@@ -132,6 +150,8 @@ class ThroughputCallback(tf.keras.callbacks.Callback):
                 tf.summary.scalar('throughput/ms_per_sample', avg_time_per_sample * 1000, step=epoch)
                 tf.summary.scalar('throughput/effective_batch_size', effective_batch_size, step=epoch)
                 tf.summary.scalar('throughput/gpu_count', gpu_count, step=epoch)
+                tf.summary.scalar('time/epoch_time_hours', total_time/3600, step=epoch)
+                tf.summary.scalar('time/estimated_remaining_days', estimated_days, step=epoch)
                 self.writer.flush()
             
             # 로그에 추가
@@ -139,6 +159,8 @@ class ThroughputCallback(tf.keras.callbacks.Callback):
             logs['throughput_ms_per_sample'] = avg_time_per_sample * 1000
             logs['effective_batch_size'] = effective_batch_size
             logs['gpu_count'] = gpu_count
+            logs['epoch_time_hours'] = total_time/3600
+            logs['estimated_remaining_days'] = estimated_days
 
     def on_train_end(self, logs=None):
         self.writer.close()

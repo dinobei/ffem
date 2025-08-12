@@ -233,7 +233,10 @@ def build_callbacks(config, test_ds_dict):
     # 전체 샘플 수 추정 (데이터셋 크기 * 에포크 수)
     estimated_total_samples = config.get('estimated_total_samples', 1000000)  # 기본값
     throughput_monitor = ThroughputCallback(estimated_total_samples, log_dir)
-    custom_progress = CustomProgressBar()
+    
+    # 데이터셋 크기 계산 (에포크당 샘플 수)
+    samples_per_epoch = estimated_total_samples // config['epoch']
+    custom_progress = CustomProgressBar(samples_per_epoch, config['batch_size'])
 
     callback_list.append(recall_eval)
     callback_list.append(checkpoint)
