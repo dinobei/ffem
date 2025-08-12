@@ -18,17 +18,133 @@ import tensorflow as tf
 import numpy as np
 
 def setup_multi_gpu():
+    """멀티 GPU 설정"""
     gpus = tf.config.list_physical_devices('GPU')
-    if len(gpus) > 1:
-        print(f"🚀 Found {len(gpus)} GPUs, enabling multi-GPU training")
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        strategy = tf.distribute.MirroredStrategy()
-        print(f"✅ Using MirroredStrategy with {strategy.num_replicas_in_sync} replicas")
-        return strategy
+    
+    # 특정 GPU 선택 (환경변수에서 읽기)
+    selected_gpus = os.environ.get('CUDA_VISIBLE_DEVICES', None)
+    if selected_gpus:
+        print(f"🎯 Using selected GPUs: {selected_gpus}")
+        # 이미 환경변수로 설정되어 있으므로 현재 GPU 목록 사용
+        available_gpus = tf.config.list_physical_devices('GPU')
+        print(f"📱 Available GPUs: {len(available_gpus)}")
+        
+        if len(available_gpus) > 1:
+            print(f"🚀 Found {len(available_gpus)} GPUs, enabling multi-GPU training")
+            for gpu in available_gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            
+            # GPU별 배치 크기 최적화
+            strategy = create_optimized_strategy(available_gpus)
+            return strategy
+        else:
+            print(f"📱 Using single GPU: {available_gpus[0] if available_gpus else 'CPU'}")
+            return None
     else:
-        print(f"📱 Using single GPU: {gpus[0] if gpus else 'CPU'}")
-        return None
+        # 기존 로직 (모든 GPU 사용)
+        if len(gpus) > 1:
+            print(f"🚀 Found {len(gpus)} GPUs, enabling multi-GPU training")
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            
+            # GPU별 배치 크기 최적화
+            strategy = create_optimized_strategy(gpus)
+            return strategy
+        else:
+            print(f"📱 Using single GPU: {gpus[0] if gpus else 'CPU'}")
+            return None
+
+def create_optimized_strategy(gpus):
+    """GPU 성능에 따른 최적화된 전략 생성"""
+    # GPU 정보 수집
+    gpu_info = []
+    for i, gpu in enumerate(gpus):
+        try:
+            # GPU 메모리 정보 가져오기 (근사값)
+            gpu_name = gpu.name
+            if '3090' in gpu_name.lower():
+                memory_gb = 24
+                performance_score = 100
+            elif '2080' in gpu_name.lower():
+                memory_gb = 11
+                performance_score = 60
+            elif '3080' in gpu_name.lower():
+                memory_gb = 10
+                performance_score = 80
+            else:
+                memory_gb = 8  # 기본값
+                performance_score = 50
+            
+            gpu_info.append({
+                'index': i,
+                'name': gpu_name,
+                'memory_gb': memory_gb,
+                'performance_score': performance_score
+            })
+        except:
+            gpu_info.append({
+                'index': i,
+                'name': gpu.name,
+                'memory_gb': 8,
+                'performance_score': 50
+            })
+    
+    print(f"📊 GPU Performance Analysis:")
+    for info in gpu_info:
+        print(f"  GPU {info['index']}: {info['name']} ({info['memory_gb']}GB, Score: {info['performance_score']})")
+    
+    # 성능 차이가 큰 경우 경고
+    scores = [info['performance_score'] for info in gpu_info]
+    if max(scores) - min(scores) > 30:
+        print(f"⚠️  Large performance gap detected! Consider using only faster GPUs.")
+        print(f"   Performance difference: {max(scores) - min(scores)} points")
+    
+    # MirroredStrategy 사용 (기본)
+    strategy = tf.distribute.MirroredStrategy()
+    print(f"✅ Using MirroredStrategy with {strategy.num_replicas_in_sync} replicas")
+    
+    return strategy
+
+def get_optimized_batch_size(config, strategy):
+    """GPU 성능에 따른 최적화된 배치 크기 계산"""
+    if strategy is None:
+        return config['batch_size']
+    
+    num_gpus = strategy.num_replicas_in_sync
+    base_batch_size = config['batch_size']
+    
+    # GPU별 배치 크기 조정
+    if num_gpus > 1:
+        # 성능이 비슷한 GPU들: 배치 크기 증가
+        # 성능 차이가 큰 GPU들: 배치 크기 조정
+        adjusted_batch_size = base_batch_size * num_gpus
+        
+        print(f"📈 Batch size optimization:")
+        print(f"  Base batch size: {base_batch_size}")
+        print(f"  Adjusted batch size: {adjusted_batch_size} (per GPU: {adjusted_batch_size // num_gpus})")
+        
+        return adjusted_batch_size
+    
+    return base_batch_size
+
+def setup_specific_gpu(gpu_indices):
+    """특정 GPU만 사용하도록 설정"""
+    if isinstance(gpu_indices, str):
+        # 문자열로 받은 경우 (예: "0,1" 또는 "0")
+        gpu_list = gpu_indices
+    elif isinstance(gpu_indices, (list, tuple)):
+        # 리스트나 튜플로 받은 경우 (예: [0, 1] 또는 [0])
+        gpu_list = ','.join(map(str, gpu_indices))
+    else:
+        # 단일 정수로 받은 경우 (예: 0)
+        gpu_list = str(gpu_indices)
+    
+    # 환경변수 설정
+    os.environ['CUDA_VISIBLE_DEVICES'] = gpu_list
+    print(f"🎯 Set CUDA_VISIBLE_DEVICES to: {gpu_list}")
+    
+    # GPU 설정 적용
+    return setup_multi_gpu()
 
 
 def build_dataset(config):
@@ -111,6 +227,13 @@ def build_callbacks(config, test_ds_dict):
         mode='max', patience=7,
         restore_best_weights=True)
     tensorboard_log = LogCallback(log_dir)
+    
+    # 처리량 모니터링 콜백 추가
+    from train.callbacks import ThroughputCallback, CustomProgressBar
+    # 전체 샘플 수 추정 (데이터셋 크기 * 에포크 수)
+    estimated_total_samples = config.get('estimated_total_samples', 1000000)  # 기본값
+    throughput_monitor = ThroughputCallback(estimated_total_samples, log_dir)
+    custom_progress = CustomProgressBar()
 
     callback_list.append(recall_eval)
     callback_list.append(checkpoint)
@@ -118,6 +241,8 @@ def build_callbacks(config, test_ds_dict):
     if not config['lr_decay']:
         callback_list.append(reduce_lr)
     callback_list.append(tensorboard_log)
+    callback_list.append(throughput_monitor)  # 처리량 모니터링 추가
+    callback_list.append(custom_progress)  # 커스텀 진행률바 추가
     return callback_list, early_stop
 
 
@@ -161,30 +286,42 @@ def restore_latest_checkpoint(net, checkpoint_path):
     print('\n----------------------------------------------------\n')
 
 def start_training(config):
-    strategy = setup_multi_gpu()
+    # 특정 GPU 선택
+    if config.get('selected_gpus') is not None:
+        strategy = setup_specific_gpu(config['selected_gpus'])
+    else:
+        strategy = setup_multi_gpu()
     
     if config['mixed_precision']:
         print('---------------- Enabled Mixed Precision ----------------')
         policy = tf.keras.mixed_precision.Policy('mixed_float16')
         tf.keras.mixed_precision.set_global_policy(policy)
+    
+    # 최적화된 배치 크기 계산
+    optimized_batch_size = get_optimized_batch_size(config, strategy)
+    
+    # 배치 크기 업데이트된 설정 생성
+    optimized_config = config.copy()
+    optimized_config['batch_size'] = optimized_batch_size
         
     if strategy:
         with strategy.scope():
-            train_ds, test_ds_dict = build_dataset(config)
-            train_net = build_model(config)
-            opt = build_optimizer(config)
-            callbacks, early_stop = build_callbacks(config, test_ds_dict)
+            train_ds, test_ds_dict = build_dataset(optimized_config)
+            train_net = build_model(optimized_config)
+            opt = build_optimizer(optimized_config)
+            callbacks, early_stop = build_callbacks(optimized_config, test_ds_dict)
             train_net.compile(optimizer=opt)
     else:
-        train_ds, test_ds_dict = build_dataset(config)
-        train_net = build_model(config)
-        opt = build_optimizer(config)
-        callbacks, early_stop = build_callbacks(config, test_ds_dict)
+        train_ds, test_ds_dict = build_dataset(optimized_config)
+        train_net = build_model(optimized_config)
+        opt = build_optimizer(optimized_config)
+        callbacks, early_stop = build_callbacks(optimized_config, test_ds_dict)
         train_net.compile(optimizer=opt)
     
     train_net.summary()
     try:
-        train_net.fit(train_ds, epochs=config['epoch'], verbose=1, callbacks=callbacks)
+        # verbose=0으로 설정하여 커스텀 진행률바가 출력을 대체
+        train_net.fit(train_ds, epochs=config['epoch'], verbose=0, callbacks=callbacks)
     except KeyboardInterrupt:
         print('--')
         if early_stop.best_weights is None:

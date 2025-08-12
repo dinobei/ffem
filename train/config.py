@@ -124,5 +124,15 @@ config = {
     #
     # Set maximum face ID in 'tfrecord_file'.
     #
-    'num_identity': 4000
+    'num_identity': 4000,
+    
+    # 멀티 GPU 설정
+    'multi_gpu': True,  # 멀티 GPU 사용 여부 (자동 감지)
+    'gpu_memory_growth': True,  # GPU 메모리 증가 허용
+    
+    # 특정 GPU 선택 (None이면 모든 GPU 사용)
+    'selected_gpus': None,  # 예: "0,1" 또는 [0, 1] 또는 0
+    
+    # 처리량 모니터링 설정
+    'estimated_total_samples': 1000000,  # 전체 샘플 수 추정 (데이터셋 크기 * 에포크 수)
 }
