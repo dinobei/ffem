@@ -17,6 +17,19 @@ from train.custom_models.group_aware_model import GroupAwareModel
 import tensorflow as tf
 import numpy as np
 
+def setup_multi_gpu():
+    gpus = tf.config.list_physical_devices('GPU')
+    if len(gpus) > 1:
+        print(f"🚀 Found {len(gpus)} GPUs, enabling multi-GPU training")
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        strategy = tf.distribute.MirroredStrategy()
+        print(f"✅ Using MirroredStrategy with {strategy.num_replicas_in_sync} replicas")
+        return strategy
+    else:
+        print(f"📱 Using single GPU: {gpus[0] if gpus else 'CPU'}")
+        return None
+
 
 def build_dataset(config):
     train_ds, test_ds_dict = input_pipeline.make_tfdataset(
@@ -148,15 +161,27 @@ def restore_latest_checkpoint(net, checkpoint_path):
     print('\n----------------------------------------------------\n')
 
 def start_training(config):
+    strategy = setup_multi_gpu()
+    
     if config['mixed_precision']:
         print('---------------- Enabled Mixed Precision ----------------')
         policy = tf.keras.mixed_precision.Policy('mixed_float16')
         tf.keras.mixed_precision.set_global_policy(policy)
-    train_ds, test_ds_dict = build_dataset(config)
-    train_net = build_model(config)
-    opt = build_optimizer(config)
-    callbacks, early_stop = build_callbacks(config, test_ds_dict)
-    train_net.compile(optimizer=opt)
+        
+    if strategy:
+        with strategy.scope():
+            train_ds, test_ds_dict = build_dataset(config)
+            train_net = build_model(config)
+            opt = build_optimizer(config)
+            callbacks, early_stop = build_callbacks(config, test_ds_dict)
+            train_net.compile(optimizer=opt)
+    else:
+        train_ds, test_ds_dict = build_dataset(config)
+        train_net = build_model(config)
+        opt = build_optimizer(config)
+        callbacks, early_stop = build_callbacks(config, test_ds_dict)
+        train_net.compile(optimizer=opt)
+    
     train_net.summary()
     try:
         train_net.fit(train_ds, epochs=config['epoch'], verbose=1, callbacks=callbacks)
