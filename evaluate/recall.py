@@ -25,6 +25,11 @@ def evaluate(model, dataset, metric, top_k: list, batch_size=256, norm=True):
         largest = False
     else:
         raise 'Unsupported metric.'
+    
+    # Mixed Precision 환경에서 float32로 강제 변환
+    policy = tf.keras.mixed_precision.global_policy()
+    if policy.name == 'mixed_float16':
+        print("⚠️  Mixed Precision detected, forcing float32 for evaluation")
 
     X = []
     Y = []
@@ -33,6 +38,11 @@ def evaluate(model, dataset, metric, top_k: list, batch_size=256, norm=True):
         batch_pred = model(batch_x)
         if norm:
             batch_pred = tf.math.l2_normalize(batch_pred, axis=1)
+        
+        # Mixed Precision 환경에서 float32로 변환
+        if policy.name == 'mixed_float16':
+            batch_pred = tf.cast(batch_pred, tf.float32)
+        
         X.append(batch_pred)
         Y.append(batch_y)
     X = tf.concat(X, axis=0)
@@ -47,6 +57,9 @@ def evaluate(model, dataset, metric, top_k: list, batch_size=256, norm=True):
         # remove self distance.
         max_dist = float('-inf') if largest else float('inf')
         max_dist = tf.fill(batch_x.shape[0], max_dist)
+        
+        # Mixed Precision 호환성을 위한 dtype 맞춤
+        max_dist = tf.cast(max_dist, dist.dtype)
         dist = tf.linalg.set_diag(dist, max_dist, k=n*batch_x.shape[0])
         # get top_k label
         batch_top_k_label = calc_top_k_label(dist, Y, max_top_k, largest)

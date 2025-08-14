@@ -63,8 +63,8 @@ class AngularMarginLayer(tf.keras.layers.Layer):
         y_pred_norm = tf.clip_by_value(y_pred, -1e6, 1e6)
         center_norm = tf.clip_by_value(center, -1e6, 1e6)
         
-        normed_embds = tf.nn.l2_normalize(y_pred_norm, axis=1)
-        normed_w = tf.nn.l2_normalize(center_norm, axis=0)
+        normed_embds = tf.nn.l2_normalize(y_pred_norm, axis=1, epsilon=1e-8)
+        normed_w = tf.nn.l2_normalize(center_norm, axis=0, epsilon=1e-8)
         
         cos_t = tf.matmul(normed_embds, normed_w)
         

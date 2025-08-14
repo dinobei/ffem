@@ -147,6 +147,58 @@ def setup_specific_gpu(gpu_indices):
     return setup_multi_gpu()
 
 
+def count_dataset_samples(dataset_path):
+    """데이터셋의 실제 샘플 수를 계산"""
+    try:
+        import tensorflow as tf
+        import os
+        from tqdm import tqdm
+        
+        print(f"🔍 Counting samples in: {dataset_path}")
+        
+        # 파일 크기로 빠른 추정 (대용량 데이터셋용)
+        file_size = os.path.getsize(dataset_path)
+        print(f"📁 File size: {file_size / (1024*1024):.1f} MB")
+        
+        # TFRecord 파일에서 실제 샘플 수 계산
+        count = 0
+        dataset = tf.data.TFRecordDataset(dataset_path)
+        
+        # tqdm으로 진행률바 표시
+        with tqdm(desc="Counting samples", unit=" samples") as pbar:
+            for record in dataset:
+                count += 1
+                pbar.update(1)
+        
+        print(f"📊 Actual dataset size: {count:,} samples")
+        return count
+        
+    except Exception as e:
+        print(f"⚠️  Could not count dataset samples: {e}")
+        return None
+
+def get_actual_dataset_size(config):
+    """실제 데이터셋 크기 가져오기"""
+    # 설정에서 가져오기 (None이면 자동 계산)
+    if config.get('estimated_total_samples') is not None:
+        total_samples = config['estimated_total_samples']
+        samples_per_epoch = total_samples // config['epoch']
+        print(f"📊 Using configured dataset size: {samples_per_epoch:,} samples per epoch")
+        return samples_per_epoch
+    
+    # 실제 파일에서 계산
+    train_file = config.get('train_file', '')
+    if train_file and os.path.exists(train_file):
+        actual_samples = count_dataset_samples(train_file)
+        if actual_samples:
+            return actual_samples
+    
+    # 기본값 (작은 테스트 데이터셋용)
+    default_samples = 10000
+    print(f"⚠️  Using default dataset size: {default_samples:,} samples per epoch")
+    return default_samples
+
+
 def build_dataset(config):
     train_ds, test_ds_dict = input_pipeline.make_tfdataset(
         config['train_file'],
@@ -229,14 +281,17 @@ def build_callbacks(config, test_ds_dict):
     tensorboard_log = LogCallback(log_dir)
     
     # 처리량 모니터링 콜백 추가
-    from train.callbacks import ThroughputCallback, CustomProgressBar
-    # 전체 샘플 수 추정 (데이터셋 크기 * 에포크 수)
-    estimated_total_samples = config.get('estimated_total_samples', 1000000)  # 기본값
-    throughput_monitor = ThroughputCallback(estimated_total_samples, log_dir)
+    from train.callbacks import ThroughputCallback, CustomProgressBar, NaNMonitorCallback
     
-    # 데이터셋 크기 계산 (에포크당 샘플 수)
-    samples_per_epoch = estimated_total_samples // config['epoch']
+    # 실제 데이터셋 크기 가져오기
+    samples_per_epoch = get_actual_dataset_size(config)
+    total_samples = samples_per_epoch * config['epoch']
+    
+    throughput_monitor = ThroughputCallback(total_samples, log_dir)
     custom_progress = CustomProgressBar(samples_per_epoch, config['batch_size'])
+    
+    # NaN 모니터링 콜백 추가
+    nan_monitor = NaNMonitorCallback(patience=10)
 
     callback_list.append(recall_eval)
     callback_list.append(checkpoint)
@@ -246,6 +301,7 @@ def build_callbacks(config, test_ds_dict):
     callback_list.append(tensorboard_log)
     callback_list.append(throughput_monitor)  # 처리량 모니터링 추가
     callback_list.append(custom_progress)  # 커스텀 진행률바 추가
+    callback_list.append(nan_monitor)  # NaN 모니터링 추가
     return callback_list, early_stop
 
 
@@ -322,9 +378,15 @@ def start_training(config):
         train_net.compile(optimizer=opt)
     
     train_net.summary()
+    
+    # steps_per_epoch 계산
+    samples_per_epoch = get_actual_dataset_size(optimized_config)
+    steps_per_epoch = samples_per_epoch // optimized_config['batch_size']
+    print(f"🚀 Epoch 1/{config['epoch']} - Steps per epoch: {steps_per_epoch}")
+    
     try:
         # verbose=0으로 설정하여 커스텀 진행률바가 출력을 대체
-        train_net.fit(train_ds, epochs=config['epoch'], verbose=0, callbacks=callbacks)
+        train_net.fit(train_ds, epochs=config['epoch'], steps_per_epoch=steps_per_epoch, verbose=0, callbacks=callbacks)
     except KeyboardInterrupt:
         print('--')
         if early_stop.best_weights is None:

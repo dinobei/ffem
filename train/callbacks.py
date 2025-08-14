@@ -6,6 +6,50 @@ import evaluate.recall as recall
 import tensorflow as tf
 
 
+class NaNMonitorCallback(tf.keras.callbacks.Callback):
+    """NaN 감지 및 조기 중단 콜백"""
+    
+    def __init__(self, patience=5):
+        super(NaNMonitorCallback, self).__init__()
+        self.patience = patience
+        self.nan_count = 0
+        self.last_valid_loss = None
+        
+    def on_train_batch_end(self, batch, logs=None):
+        if logs is None:
+            return
+            
+        current_loss = logs.get('loss', None)
+        
+        # NaN 감지
+        if current_loss is not None and (tf.math.is_nan(current_loss) or tf.math.is_inf(current_loss)):
+            self.nan_count += 1
+            print(f"\n⚠️  NaN/Inf detected! Batch {batch}, Loss: {current_loss}")
+            print(f"   NaN count: {self.nan_count}/{self.patience}")
+            
+            if self.nan_count >= self.patience:
+                print(f"\n❌ Training stopped due to NaN/Inf loss for {self.patience} consecutive batches")
+                self.model.stop_training = True
+        else:
+            # 유효한 loss가 나오면 카운터 리셋
+            if current_loss is not None:
+                self.nan_count = 0
+                self.last_valid_loss = current_loss
+                
+        # Loss가 너무 크면 경고
+        if current_loss is not None and current_loss > 100:
+            print(f"\n⚠️  High loss detected! Batch {batch}, Loss: {current_loss}")
+            
+    def on_epoch_end(self, epoch, logs=None):
+        if logs is None:
+            return
+            
+        epoch_loss = logs.get('loss', None)
+        if epoch_loss is not None and (tf.math.is_nan(epoch_loss) or tf.math.is_inf(epoch_loss)):
+            print(f"\n❌ Epoch {epoch + 1} ended with NaN/Inf loss: {epoch_loss}")
+            self.model.stop_training = True
+
+
 class CustomProgressBar(tf.keras.callbacks.Callback):
     """처리량 정보를 포함한 커스텀 진행률바"""
     
@@ -118,49 +162,53 @@ class ThroughputCallback(tf.keras.callbacks.Callback):
     
     def on_epoch_end(self, epoch, logs=None):
         """에포크 끝날 때 최종 성능 통계"""
-        if self.epoch_start_time is not None:
+        if self.epoch_start_time is not None and self.step_samples:
             total_time = time.time() - self.epoch_start_time
             total_samples = sum(self.step_samples)
             
-            # 성능 통계 계산
-            samples_per_second = total_samples / total_time
-            avg_time_per_sample = total_time / total_samples
+            # ZeroDivisionError 방지
+            if total_samples > 0 and total_time > 0:
+                # 성능 통계 계산
+                samples_per_second = total_samples / total_time
+                avg_time_per_sample = total_time / total_samples
             
-            # GPU 정보
-            gpu_count = len(tf.config.list_physical_devices('GPU'))
-            effective_batch_size = self.step_samples[0] * gpu_count if self.step_samples else 0
-            
-            # 남은 에포크 예상 시간
-            remaining_epochs = 40 - (epoch + 1)  # config에서 가져와야 함
-            estimated_total_time = total_time * remaining_epochs
-            estimated_days = estimated_total_time / (24 * 3600)
-            
-            print(f"\n📈 Epoch {epoch + 1} Performance Summary:")
-            print(f"  ⏱️  Total time: {total_time:.2f} seconds ({total_time/3600:.2f} hours)")
-            print(f"  📊 Total samples: {total_samples:,}")
-            print(f"  🚀 Throughput: {samples_per_second:.1f} samples/second")
-            print(f"  ⚡ Avg time per sample: {avg_time_per_sample*1000:.2f} ms")
-            print(f"  🎯 Effective batch size: {effective_batch_size}")
-            print(f"  🖥️  GPUs used: {gpu_count}")
-            print(f"  ⏳ Estimated remaining time: {estimated_days:.1f} days")
-            
-            # TensorBoard에 기록
-            with self.writer.as_default():
-                tf.summary.scalar('throughput/samples_per_second', samples_per_second, step=epoch)
-                tf.summary.scalar('throughput/ms_per_sample', avg_time_per_sample * 1000, step=epoch)
-                tf.summary.scalar('throughput/effective_batch_size', effective_batch_size, step=epoch)
-                tf.summary.scalar('throughput/gpu_count', gpu_count, step=epoch)
-                tf.summary.scalar('time/epoch_time_hours', total_time/3600, step=epoch)
-                tf.summary.scalar('time/estimated_remaining_days', estimated_days, step=epoch)
-                self.writer.flush()
-            
-            # 로그에 추가
-            logs['throughput_samples_per_sec'] = samples_per_second
-            logs['throughput_ms_per_sample'] = avg_time_per_sample * 1000
-            logs['effective_batch_size'] = effective_batch_size
-            logs['gpu_count'] = gpu_count
-            logs['epoch_time_hours'] = total_time/3600
-            logs['estimated_remaining_days'] = estimated_days
+                # GPU 정보
+                gpu_count = len(tf.config.list_physical_devices('GPU'))
+                effective_batch_size = self.step_samples[0] * gpu_count if self.step_samples else 0
+                
+                # 남은 에포크 예상 시간
+                remaining_epochs = 40 - (epoch + 1)  # config에서 가져와야 함
+                estimated_total_time = total_time * remaining_epochs
+                estimated_days = estimated_total_time / (24 * 3600)
+                
+                print(f"\n📈 Epoch {epoch + 1} Performance Summary:")
+                print(f"  ⏱️  Total time: {total_time:.2f} seconds ({total_time/3600:.2f} hours)")
+                print(f"  📊 Total samples: {total_samples:,}")
+                print(f"  🚀 Throughput: {samples_per_second:.1f} samples/second")
+                print(f"  ⚡ Avg time per sample: {avg_time_per_sample*1000:.2f} ms")
+                print(f"  🎯 Effective batch size: {effective_batch_size}")
+                print(f"  🖥️  GPUs used: {gpu_count}")
+                print(f"  ⏳ Estimated remaining time: {estimated_days:.1f} days")
+                
+                # TensorBoard에 기록
+                with self.writer.as_default():
+                    tf.summary.scalar('throughput/samples_per_second', samples_per_second, step=epoch)
+                    tf.summary.scalar('throughput/ms_per_sample', avg_time_per_sample * 1000, step=epoch)
+                    tf.summary.scalar('throughput/effective_batch_size', effective_batch_size, step=epoch)
+                    tf.summary.scalar('throughput/gpu_count', gpu_count, step=epoch)
+                    tf.summary.scalar('time/epoch_time_hours', total_time/3600, step=epoch)
+                    tf.summary.scalar('time/estimated_remaining_days', estimated_days, step=epoch)
+                    self.writer.flush()
+                
+                # 로그에 추가
+                logs['throughput_samples_per_sec'] = samples_per_second
+                logs['throughput_ms_per_sample'] = avg_time_per_sample * 1000
+                logs['effective_batch_size'] = effective_batch_size
+                logs['gpu_count'] = gpu_count
+                logs['epoch_time_hours'] = total_time/3600
+                logs['estimated_remaining_days'] = estimated_days
+            else:
+                print(f"\n⚠️  Epoch {epoch + 1}: No samples processed or zero time elapsed")
 
     def on_train_end(self, logs=None):
         self.writer.close()

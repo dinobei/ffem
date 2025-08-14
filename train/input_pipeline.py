@@ -182,7 +182,7 @@ def make_tfdataset(train_tfrecord, test_tfrecord, batch_size, img_shape):
             num_parallel_calls=TF_AUTOTUNE)
     train_ds = train_ds.map(lambda x, label: (tf.clip_by_value(x, 0., 1.), label), num_parallel_calls=TF_AUTOTUNE)
     train_ds = train_ds.map(lambda x, label: (cutout(x), label), num_parallel_calls=TF_AUTOTUNE)
-    train_ds = train_ds.repeat()  # Add repeat to make dataset infinite
+    train_ds = train_ds.repeat()  # Add repeat back for infinite dataset, controlled by steps_per_epoch
     train_ds = train_ds.prefetch(TF_AUTOTUNE)
 
     test_ds_dict = {}

@@ -133,6 +133,6 @@ config = {
     # 특정 GPU 선택 (None이면 모든 GPU 사용)
     'selected_gpus': None,  # 예: "0,1" 또는 [0, 1] 또는 0
     
-    # 처리량 모니터링 설정
-    'estimated_total_samples': 1000000,  # 전체 샘플 수 추정 (데이터셋 크기 * 에포크 수)
+    # 처리량 모니터링 설정 (자동 계산으로 변경)
+    'estimated_total_samples': None,  # None으로 설정하면 자동으로 실제 데이터셋 크기를 계산
 }
