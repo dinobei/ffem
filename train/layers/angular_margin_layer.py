@@ -60,18 +60,21 @@ class AngularMarginLayer(tf.keras.layers.Layer):
             th = tf.cast(th, tf.float32)
             mm = tf.cast(mm, tf.float32)
         
-        y_pred_norm = tf.clip_by_value(y_pred, -1e6, 1e6)
-        center_norm = tf.clip_by_value(center, -1e6, 1e6)
+        # 수치 안정성을 위한 clipping (더 보수적으로)
+        y_pred_norm = tf.clip_by_value(y_pred, -1e4, 1e4)
+        center_norm = tf.clip_by_value(center, -1e4, 1e4)
         
-        normed_embds = tf.nn.l2_normalize(y_pred_norm, axis=1, epsilon=1e-8)
-        normed_w = tf.nn.l2_normalize(center_norm, axis=0, epsilon=1e-8)
+        # L2 normalization with larger epsilon
+        normed_embds = tf.nn.l2_normalize(y_pred_norm, axis=1, epsilon=1e-6)
+        normed_w = tf.nn.l2_normalize(center_norm, axis=0, epsilon=1e-6)
         
         cos_t = tf.matmul(normed_embds, normed_w)
         
-        cos_t = tf.clip_by_value(cos_t, -0.9999, 0.9999)
+        # 더 보수적인 clipping
+        cos_t = tf.clip_by_value(cos_t, -0.999, 0.999)
         
         sin_t_squared = 1.0 - cos_t * cos_t
-        sin_t_squared = tf.clip_by_value(sin_t_squared, 1e-7, 1.0)
+        sin_t_squared = tf.clip_by_value(sin_t_squared, 1e-6, 1.0)
         sin_t = tf.sqrt(sin_t_squared)
         
         cos_mt = cos_t * cos_m - sin_t * sin_m
