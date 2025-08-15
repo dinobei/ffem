@@ -233,6 +233,7 @@ class RecallCallback(tf.keras.callbacks.Callback):
         for k in self.top_k:
             recall_avgs['recall@{}'.format(k)] = 0.
         # Evaluate recall over multiple datasets
+        print(f"\n📊 Epoch {epoch + 1} - Individual Dataset Recall:")
         for ds_name in self.ds_dict:
             ds = self.ds_dict[ds_name]
             ds_base_name = os.path.basename(ds_name)
@@ -245,6 +246,7 @@ class RecallCallback(tf.keras.callbacks.Callback):
                     tf.summary.scalar(scalar_name, value, step=epoch)
                     logs[recall_str] = tf.identity(value)
                     recall_avgs[recall_str] += value
+                    print(f"  📁 {ds_base_name}: {value:.2f}%")
                 self.writer.flush()
         with self.writer.as_default():
             ds_size = len(self.ds_dict)
