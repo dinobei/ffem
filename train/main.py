@@ -1,3 +1,5 @@
+import argparse
+import importlib
 import copy
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -405,5 +407,13 @@ def start_training(config):
     train_net.backbone.save('{}_backbone.h5'.format(train_net.name))
 
 if __name__ == '__main__':
-    config = train.config.config
+    parser = argparse.ArgumentParser(description='FFEM Training')
+    parser.add_argument('--config', type=str, default='train.config',
+                        help='Config module path (default: train.config)')
+    args = parser.parse_args()
+    
+    config_module = importlib.import_module(args.config)
+    config = config_module.config
+    
+    print(f"📋 Using config: {args.config}")
     start_training(config)
