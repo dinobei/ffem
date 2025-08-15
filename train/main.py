@@ -345,6 +345,10 @@ def restore_latest_checkpoint(net, checkpoint_path):
     print('\n----------------------------------------------------\n')
 
 def start_training(config):
+    # Remove GPU timer warning
+    os.environ['TF_GPU_THREAD_MODE'] = 'gpu_private'
+    os.environ['TF_GPU_THREAD_COUNT'] = '1'
+    
     # 특정 GPU 선택
     if config.get('selected_gpus') is not None:
         strategy = setup_specific_gpu(config['selected_gpus'])
@@ -355,6 +359,7 @@ def start_training(config):
         print('---------------- Enabled Mixed Precision ----------------')
         policy = tf.keras.mixed_precision.Policy('mixed_float16')
         tf.keras.mixed_precision.set_global_policy(policy)
+    tf.get_logger().setLevel('ERROR')
     
     # 최적화된 배치 크기 계산
     optimized_batch_size = get_optimized_batch_size(config, strategy)
