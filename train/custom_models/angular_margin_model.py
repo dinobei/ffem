@@ -14,6 +14,7 @@ class AngularMarginModel(GradientAccumulatorModel):
                  margin=0.5,
                  scale=30,
                  num_grad_accum=1,
+                 dropout_rate=0.1,
                  **kargs):
         super(AngularMarginModel, self).__init__(num_accum=num_grad_accum, **kargs)
         self.backbone = backbone
@@ -21,6 +22,7 @@ class AngularMarginModel(GradientAccumulatorModel):
         self.feature_pooling = NormAwarePoolingLayer()
         self.fc1 = tf.keras.layers.Dense(embedding_dim,
             kernel_regularizer=tf.keras.regularizers.l2(5e-4))
+        self.dropout = tf.keras.layers.Dropout(dropout_rate)
         self.batchnorm_final = tf.keras.layers.BatchNormalization()
         self.angular_margin = AngularMarginLayer(n_classes, margin, scale)
         self.loss_tracker = tf.keras.metrics.Mean(name='loss')
@@ -35,6 +37,7 @@ class AngularMarginModel(GradientAccumulatorModel):
             features = self.backbone(x)
             embeddings = self.feature_pooling(features)
             embeddings = self.fc1(embeddings)
+            embeddings = self.dropout(embeddings, training=True)
             embeddings = self.batchnorm_final(embeddings)
             embeddings = self.angular_margin([embeddings, y_true])
         else:
@@ -42,6 +45,7 @@ class AngularMarginModel(GradientAccumulatorModel):
             features = self.backbone(x)
             embeddings = self.feature_pooling(features)
             embeddings = self.fc1(embeddings)
+            embeddings = self.dropout(embeddings, training=False)
             embeddings = self.batchnorm_final(embeddings)
         return embeddings
 
@@ -69,5 +73,6 @@ class AngularMarginModel(GradientAccumulatorModel):
         y = self.backbone.outputs[0]
         y = self.feature_pooling(y)
         y = self.fc1(y)
+        y = self.dropout(y, training=False)
         y = self.batchnorm_final(y)
         return tf.keras.Model(x, y, name='{}_embedding'.format(self.name))
