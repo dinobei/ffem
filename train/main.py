@@ -308,13 +308,23 @@ def build_callbacks(config, test_ds_dict):
 
 
 def build_optimizer(config):
-    # In tf-v2.3.0, Do not use tf.keras.optimizers.schedules with ReduceLR callback.
     if config['lr_decay']:
+        samples_per_epoch = get_actual_dataset_size(config)
+        steps_per_epoch = samples_per_epoch // config['batch_size']
+        total_steps = config['epoch'] * steps_per_epoch
+        warmup_steps = total_steps // 10  # 10% warmup
+        
+        print(f"📊 Learning Rate Schedule:")
+        print(f"  Total steps: {total_steps}")
+        print(f"  Warmup steps: {warmup_steps}")
+        print(f"  Steps per epoch: {steps_per_epoch}")
+        
         lr = tf.keras.optimizers.schedules.ExponentialDecay(
-            config['lr'],
+            initial_learning_rate=config['lr'],
             decay_steps=config['lr_decay_steps'],
             decay_rate=config['lr_decay_rate'],
-            staircase=True)
+            staircase=True
+        )
     else:
         lr = config['lr']
 
