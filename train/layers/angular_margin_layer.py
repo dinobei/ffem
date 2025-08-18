@@ -60,13 +60,8 @@ class AngularMarginLayer(tf.keras.layers.Layer):
             th = tf.cast(th, tf.float32)
             mm = tf.cast(mm, tf.float32)
         
-        # 수치 안정성을 위한 clipping (더 보수적으로)
-        y_pred_norm = tf.clip_by_value(y_pred, -1e4, 1e4)
-        center_norm = tf.clip_by_value(center, -1e4, 1e4)
-        
-        # L2 normalization with larger epsilon
-        normed_embds = tf.nn.l2_normalize(y_pred_norm, axis=1, epsilon=1e-6)
-        normed_w = tf.nn.l2_normalize(center_norm, axis=0, epsilon=1e-6)
+        normed_embds = tf.nn.l2_normalize(y_pred, axis=1)
+        normed_w = tf.nn.l2_normalize(center, axis=0)
         
         cos_t = tf.matmul(normed_embds, normed_w)
         
