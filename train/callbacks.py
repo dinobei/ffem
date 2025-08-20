@@ -90,7 +90,7 @@ class CustomProgressBar(tf.keras.callbacks.Callback):
             progress = (batch / self.steps_per_epoch) * 100
             
             # 진행률바 출력 (에포크 경계 포함)
-            progress_line = f"{batch}/{self.steps_per_epoch} ({progress:.1f}%) {step_time:.0f}s {step_time:.1f}s/step - accuracy: {accuracy:.3e} - loss: {loss:.4f}"
+            progress_line = f"{batch}/{self.steps_per_epoch} ({progress:.1f}%) {step_time:.0f}s {step_time:.1f}s/step - accuracy: {accuracy:.5f} - loss: {loss:.4f}"
             if throughput:
                 progress_line += f" {throughput}"
             

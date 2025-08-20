@@ -5,6 +5,8 @@ from train.layers.group_aware_layer import GroupAwareLayer
 from train.layers.norm_aware_pooling_layer import NormAwarePoolingLayer
 from train.layers.angular_margin_layer import AngularMarginLayer
 from train.layers.center_margin_layer import CenterMarginLayer
+from train.layers.cosface_layer import CosFaceLayer
+from train.layers.adaface_layer import AdaFaceLayer
 
 import tensorflow as tf
 
@@ -12,7 +14,9 @@ keras_custom_objects = {
     'GroupAwareLayer': GroupAwareLayer,
     'NormAwarePoolingLayer': NormAwarePoolingLayer,
     'AngularMarginLayer': AngularMarginLayer,
-    'CenterMarginLayer': CenterMarginLayer
+    'CenterMarginLayer': CenterMarginLayer,
+    'CosFaceLayer': CosFaceLayer,
+    'AdaFaceLayer': AdaFaceLayer
 }
 
 def convert_tflite_int8(model, calb_data, output_name, quant_level=0):

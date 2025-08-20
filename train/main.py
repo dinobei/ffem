@@ -15,6 +15,8 @@ import train.blocks
 from train.custom_models.softmax_center_model import SoftmaxCenterModel
 from train.custom_models.angular_margin_model import AngularMarginModel
 from train.custom_models.group_aware_model import GroupAwareModel
+from train.custom_models.cosface_model import CosFaceModel
+from train.custom_models.adaface_model import AdaFaceModel
 
 import tensorflow as tf
 import numpy as np
@@ -246,6 +248,16 @@ def build_model(config):
         param['n_classes'] = config['num_identity']
         param['instance_dim'] = config['embedding_dim']
         model = GroupAwareModel(net, **param, name=config['model_name'])
+    elif config['loss'] == 'CosFace':
+        param['n_classes'] = config['num_identity']
+        param['embedding_dim'] = config['embedding_dim']
+        param['use_l2_norm'] = config.get('use_l2_norm', True)
+        model = CosFaceModel(net, **param, name=config['model_name'])
+    elif config['loss'] == 'AdaFace':
+        param['n_classes'] = config['num_identity']
+        param['embedding_dim'] = config['embedding_dim']
+        param['use_l2_norm'] = config.get('use_l2_norm', True)
+        model = AdaFaceModel(net, **param, name=config['model_name'])
     else:
         raise Exception('The loss ({}) is not supported.'.format(config['loss']))
 
@@ -330,12 +342,12 @@ def build_optimizer(config):
 
     opt_list = {
         'Adam': 
-            tf.keras.optimizers.Adam(learning_rate=lr),
+            tf.keras.optimizers.Adam(learning_rate=lr, clipnorm=0.5),
         'SGD':
             tf.keras.optimizers.SGD(learning_rate=lr,
-                momentum=0.9, nesterov=True),
+                momentum=0.9, nesterov=True, clipnorm=0.5),
         'AdamW': 
-            tf.keras.optimizers.AdamW(learning_rate=lr, weight_decay=1e-4),
+            tf.keras.optimizers.AdamW(learning_rate=lr, weight_decay=1e-4, clipnorm=0.5),
     }
     if config['optimizer'] not in opt_list:
         print(config['optimizer'], 'is not support.')
