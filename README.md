@@ -1,19 +1,21 @@
 # FFEM  
 FFEM stands for Face Feature Embedding Module.  
 This project includes following implementations:  
-1. ArcFace  
-2. GroupFace  
-3. CenterLoss  
+1. ArcFace
+2. CosFace
+3. AdaFace
+4. GroupFace  
+5. CenterLoss  
 
 ## Requirements
 ```
-tensorflow>=2.19.0
+tensorflow>=2.15.0
 numpy>=1.24.0
 ```
 
-**Note**: This project has been updated to work with TensorFlow 2.19. The original version was developed for TensorFlow 2.4.1.
+**Note**: This project has been updated to work with TensorFlow 2.15. The original version was developed for TensorFlow 2.4.1.
 
-## Major Updates for TensorFlow 2.19
+## Major Updates for TensorFlow 2.15
 - Removed `tensorflow-addons` dependency and replaced with native TensorFlow operations
 - Updated mixed precision API calls
 - Fixed checkpoint restoration API

@@ -6,7 +6,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import train.input_pipeline as input_pipeline
 import train.config
-from train.callbacks import LogCallback
+from train.callbacks import LogCallback, CSVLoggerCallback, BackboneCheckpoint
+from train.callbacks import WeightsCheckpoint
 from train.callbacks import RecallCallback
 from train.utils import apply_pruning
 from train.utils import apply_quantization_aware
@@ -21,183 +22,63 @@ from train.custom_models.adaface_model import AdaFaceModel
 import tensorflow as tf
 import numpy as np
 
-def setup_multi_gpu():
-    """멀티 GPU 설정"""
-    gpus = tf.config.list_physical_devices('GPU')
-    
-    # 특정 GPU 선택 (환경변수에서 읽기)
-    selected_gpus = os.environ.get('CUDA_VISIBLE_DEVICES', None)
-    if selected_gpus:
-        print(f"🎯 Using selected GPUs: {selected_gpus}")
-        # 이미 환경변수로 설정되어 있으므로 현재 GPU 목록 사용
-        available_gpus = tf.config.list_physical_devices('GPU')
-        print(f"📱 Available GPUs: {len(available_gpus)}")
-        
-        if len(available_gpus) > 1:
-            print(f"🚀 Found {len(available_gpus)} GPUs, enabling multi-GPU training")
-            for gpu in available_gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-            
-            # GPU별 배치 크기 최적화
-            strategy = create_optimized_strategy(available_gpus)
-            return strategy
-        else:
-            print(f"📱 Using single GPU: {available_gpus[0] if available_gpus else 'CPU'}")
-            return None
-    else:
-        # 기존 로직 (모든 GPU 사용)
-        if len(gpus) > 1:
-            print(f"🚀 Found {len(gpus)} GPUs, enabling multi-GPU training")
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-            
-            # GPU별 배치 크기 최적화
-            strategy = create_optimized_strategy(gpus)
-            return strategy
-        else:
-            print(f"📱 Using single GPU: {gpus[0] if gpus else 'CPU'}")
-            return None
-
-def create_optimized_strategy(gpus):
-    """GPU 성능에 따른 최적화된 전략 생성"""
-    # GPU 정보 수집
-    gpu_info = []
-    for i, gpu in enumerate(gpus):
-        try:
-            # GPU 메모리 정보 가져오기 (근사값)
-            gpu_name = gpu.name
-            if '3090' in gpu_name.lower():
-                memory_gb = 24
-                performance_score = 100
-            elif '2080' in gpu_name.lower():
-                memory_gb = 11
-                performance_score = 60
-            elif '3080' in gpu_name.lower():
-                memory_gb = 10
-                performance_score = 80
-            else:
-                memory_gb = 8  # 기본값
-                performance_score = 50
-            
-            gpu_info.append({
-                'index': i,
-                'name': gpu_name,
-                'memory_gb': memory_gb,
-                'performance_score': performance_score
-            })
-        except:
-            gpu_info.append({
-                'index': i,
-                'name': gpu.name,
-                'memory_gb': 8,
-                'performance_score': 50
-            })
-    
-    print(f"📊 GPU Performance Analysis:")
-    for info in gpu_info:
-        print(f"  GPU {info['index']}: {info['name']} ({info['memory_gb']}GB, Score: {info['performance_score']})")
-    
-    # 성능 차이가 큰 경우 경고
-    scores = [info['performance_score'] for info in gpu_info]
-    if max(scores) - min(scores) > 30:
-        print(f"⚠️  Large performance gap detected! Consider using only faster GPUs.")
-        print(f"   Performance difference: {max(scores) - min(scores)} points")
-    
-    # MirroredStrategy 사용 (기본)
-    strategy = tf.distribute.MirroredStrategy()
-    print(f"✅ Using MirroredStrategy with {strategy.num_replicas_in_sync} replicas")
-    
-    return strategy
-
-def get_optimized_batch_size(config, strategy):
-    """GPU 성능에 따른 최적화된 배치 크기 계산"""
-    if strategy is None:
-        return config['batch_size']
-    
-    num_gpus = strategy.num_replicas_in_sync
-    base_batch_size = config['batch_size']
-    
-    # GPU별 배치 크기 조정
-    if num_gpus > 1:
-        # 성능이 비슷한 GPU들: 배치 크기 증가
-        # 성능 차이가 큰 GPU들: 배치 크기 조정
-        adjusted_batch_size = base_batch_size * num_gpus
-        
-        print(f"📈 Batch size optimization:")
-        print(f"  Base batch size: {base_batch_size}")
-        print(f"  Adjusted batch size: {adjusted_batch_size} (per GPU: {adjusted_batch_size // num_gpus})")
-        
-        return adjusted_batch_size
-    
-    return base_batch_size
-
-def setup_specific_gpu(gpu_indices):
-    """특정 GPU만 사용하도록 설정"""
-    if isinstance(gpu_indices, str):
-        # 문자열로 받은 경우 (예: "0,1" 또는 "0")
-        gpu_list = gpu_indices
-    elif isinstance(gpu_indices, (list, tuple)):
-        # 리스트나 튜플로 받은 경우 (예: [0, 1] 또는 [0])
-        gpu_list = ','.join(map(str, gpu_indices))
-    else:
-        # 단일 정수로 받은 경우 (예: 0)
-        gpu_list = str(gpu_indices)
-    
-    # 환경변수 설정
-    os.environ['CUDA_VISIBLE_DEVICES'] = gpu_list
-    print(f"🎯 Set CUDA_VISIBLE_DEVICES to: {gpu_list}")
-    
-    # GPU 설정 적용
-    return setup_multi_gpu()
-
-
 def count_dataset_samples(dataset_path):
-    """데이터셋의 실제 샘플 수를 계산"""
+    """calculate actual samples in dataset (support list of paths)"""
     try:
         import tensorflow as tf
         import os
         from tqdm import tqdm
-        
-        print(f"🔍 Counting samples in: {dataset_path}")
-        
-        # 파일 크기로 빠른 추정 (대용량 데이터셋용)
-        file_size = os.path.getsize(dataset_path)
-        print(f"📁 File size: {file_size / (1024*1024):.1f} MB")
-        
-        # TFRecord 파일에서 실제 샘플 수 계산
-        count = 0
-        dataset = tf.data.TFRecordDataset(dataset_path)
-        
-        # tqdm으로 진행률바 표시
-        with tqdm(desc="Counting samples", unit=" samples") as pbar:
-            for record in dataset:
-                count += 1
-                pbar.update(1)
-        
-        print(f"📊 Actual dataset size: {count:,} samples")
-        return count
-        
+
+        def _count_one(path):
+            try:
+                print(f"🔍 Counting samples in: {path}")
+                try:
+                    file_size = os.path.getsize(path)
+                    print(f"📁 File size: {file_size / (1024*1024):.1f} MB")
+                except Exception:
+                    pass
+                cnt = 0
+                dataset = tf.data.TFRecordDataset(path)
+                with tqdm(desc=f"Counting {os.path.basename(path)}", unit=" samples") as pbar:
+                    for _ in dataset:
+                        cnt += 1
+                        pbar.update(1)
+                print(f"📊 Actual dataset size: {cnt:,} samples")
+                return cnt
+            except Exception as e:
+                print(f"⚠️  Could not count dataset samples in {path}: {e}")
+                return 0
+
+        if isinstance(dataset_path, (list, tuple)):
+            total = 0
+            for p in dataset_path:
+                total += _count_one(p)
+            print(f"📊 Combined dataset size: {total:,} samples")
+            return total
+        else:
+            return _count_one(dataset_path)
     except Exception as e:
         print(f"⚠️  Could not count dataset samples: {e}")
         return None
 
 def get_actual_dataset_size(config):
-    """실제 데이터셋 크기 가져오기"""
-    # 설정에서 가져오기 (None이면 자동 계산)
-    if config.get('estimated_total_samples') is not None:
-        total_samples = config['estimated_total_samples']
-        samples_per_epoch = total_samples // config['epoch']
-        print(f"📊 Using configured dataset size: {samples_per_epoch:,} samples per epoch")
-        return samples_per_epoch
-    
-    # 실제 파일에서 계산
-    train_file = config.get('train_file', '')
-    if train_file and os.path.exists(train_file):
-        actual_samples = count_dataset_samples(train_file)
-        if actual_samples:
+    """get actual dataset size from config['total_samples'] or count train_files"""
+    # 1) honor manual per-epoch total if provided (>0)
+    manual = config.get('total_samples', None)
+    if manual is not None and manual > 0:
+        return int(manual)
+
+    # 2) otherwise, count from training files
+    train_files = config.get('train_files')
+    if isinstance(train_files, (list, tuple)) and len(train_files) > 0:
+        actual_samples = count_dataset_samples(train_files)
+        if actual_samples and actual_samples > 0:
             return actual_samples
-    
-    # 기본값 (작은 테스트 데이터셋용)
+    elif isinstance(train_files, str) and train_files:
+        actual_samples = count_dataset_samples(train_files)
+        if actual_samples and actual_samples > 0:
+            return actual_samples
+    # default value (for small test dataset)
     default_samples = 10000
     print(f"⚠️  Using default dataset size: {default_samples:,} samples per epoch")
     return default_samples
@@ -205,22 +86,34 @@ def get_actual_dataset_size(config):
 
 def build_dataset(config):
     train_ds, test_ds_dict = input_pipeline.make_tfdataset(
-        config['train_file'],
+        config['train_files'],
         config['test_files'],
         config['batch_size'],
-        config['shape'][:2])
+        config['shape'][:2],
+        config.get('shuffle_buffer_size', None),
+        config.get('global_shuffle', None),
+    )
     return train_ds, test_ds_dict
 
 
 def build_backbone_model(config):
     is_pretrained = False
-    if os.path.exists(config['saved_backbone']):
+    # if ckpt exists, skip backbone file (ckpt contains all backbone + head)
+    checkpoint_dir = config.get('checkpoint', None)
+    
+    # if ckpt exists, skip backbone file
+    if checkpoint_dir and tf.train.latest_checkpoint(checkpoint_dir) is not None:
+        print('\n---------------- Skip Backbone Load (ckpt will restore all) ----------------\n')
+        print('checkpoint directory has ckpt files, skipping saved_backbone load')
+        print('\n----------------------------------------------------------------------------\n')
+        net = net_arch.models.get_model(config['model'], config['shape'])
+    elif os.path.exists(config['saved_backbone']):
         net = tf.keras.models.load_model(config['saved_backbone'])
         print('\n---------------- Restore Backbone Network ----------------\n')
         print(config['saved_backbone'])
         print('\n----------------------------------------------------------\n')
         is_pretrained = True
-    else :
+    else:
         net = net_arch.models.get_model(config['model'], config['shape'])
 
     return net, is_pretrained
@@ -251,12 +144,10 @@ def build_model(config):
     elif config['loss'] == 'CosFace':
         param['n_classes'] = config['num_identity']
         param['embedding_dim'] = config['embedding_dim']
-        param['use_l2_norm'] = config.get('use_l2_norm', True)
         model = CosFaceModel(net, **param, name=config['model_name'])
     elif config['loss'] == 'AdaFace':
         param['n_classes'] = config['num_identity']
         param['embedding_dim'] = config['embedding_dim']
-        param['use_l2_norm'] = config.get('use_l2_norm', True)
         model = AdaFaceModel(net, **param, name=config['model_name'])
     else:
         raise Exception('The loss ({}) is not supported.'.format(config['loss']))
@@ -266,6 +157,8 @@ def build_model(config):
     # After restoring a checkpoint without pre-compile, 
     #  learning rate is overridden with a checkpoint, when it compiles with a new optimizer.
     model.compile()
+    
+    # restore weights: if ckpt exists, restore full model, otherwise restore backbone only
     restore_latest_checkpoint(model, config['checkpoint'])
     if config['enable_quant_aware']:
         model.backbone = apply_quantization_aware(model.backbone, None)
@@ -274,87 +167,194 @@ def build_model(config):
 
 
 def build_callbacks(config, test_ds_dict):
+    """create callbacks - include advanced metrics"""
     log_dir = os.path.join('logs', config['model_name'])
     callback_list = []
     metric = config['eval']['metric']
     recall_topk = config['eval']['recall']
-    recall_eval = RecallCallback(test_ds_dict, recall_topk, metric, log_dir)
+    # set advanced metrics calculation interval (1 epoch)
+    advanced_metrics_interval = 1
+    recall_eval = RecallCallback(test_ds_dict, recall_topk, metric, log_dir, advanced_metrics_interval, config['model_name'])
     reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
         monitor='recall@1', factor=0.5, mode='max',
         patience=2, min_lr=1e-4, verbose=1)
-    checkpoint = tf.keras.callbacks.ModelCheckpoint(
-        filepath='./checkpoints/{}/best.keras'.format(config['model_name']),
+    
+    # checkpoint for inference model (for TFLite conversion)
+    from train.callbacks import InferenceModelCheckpoint
+    inference_checkpoint = InferenceModelCheckpoint(
+        filepath='./checkpoints/{}/best_inference.keras'.format(config['model_name']),
         monitor='recall@1',
         mode='max',
         save_best_only=True,
-        verbose=1)
+        verbose=0)  # RecallCallback will print combined log
+    
+    # checkpoint for full model (for resume training) - also save backbone
+    full_checkpoint = BackboneCheckpoint(
+        filepath='./checkpoints/{}/best_full.keras'.format(config['model_name']),
+        monitor='recall@1',
+        mode='max',
+        save_best_only=True,
+        verbose=0)  # RecallCallback will print combined log
+
+    # checkpoint for weights (for resume training/external evaluation)
+    weights_ckpt = WeightsCheckpoint(
+        checkpoint_dir='./checkpoints/{}/ckpt'.format(config['model_name']),
+        monitor='recall@1',
+        mode='max',
+        save_best_only=True,
+        verbose=0,  # RecallCallback will print combined log
+        max_to_keep=5
+    )
+    
     early_stop = tf.keras.callbacks.EarlyStopping(
         monitor='recall@1',
-        mode='max', patience=7,
+        mode='max', patience=100,
         restore_best_weights=True)
     tensorboard_log = LogCallback(log_dir)
     
-    # 처리량 모니터링 콜백 추가
+    # add throughput monitoring callback
     from train.callbacks import ThroughputCallback, CustomProgressBar, NaNMonitorCallback
     
-    # 실제 데이터셋 크기 가져오기
+    # get actual dataset size
     samples_per_epoch = get_actual_dataset_size(config)
     total_samples = samples_per_epoch * config['epoch']
     
-    throughput_monitor = ThroughputCallback(total_samples, log_dir)
-    custom_progress = CustomProgressBar(samples_per_epoch, config['batch_size'])
+    # get batch size from config
+    batch_size = config['batch_size']
+    throughput_monitor = ThroughputCallback(total_samples, log_dir, config)
+    custom_progress = CustomProgressBar(samples_per_epoch, batch_size, config['epoch'])
     
-    # NaN 모니터링 콜백 추가
+    # Progress bar information is printed by CustomProgressBar, so remove it here
+    
+    # add NaN monitoring callback
     nan_monitor = NaNMonitorCallback(patience=10)
+    
+    # add CSV logging callback
+    csv_logger = CSVLoggerCallback(
+        log_dir=os.path.join('checkpoints', config['model_name']),
+        config=config,
+        test_ds_dict=test_ds_dict,
+        top_k=recall_topk,
+        metric=metric,
+        include_precision=False,  # disable Precision@K calculation (currently inaccurate)
+        save_config=True
+    )
 
     callback_list.append(recall_eval)
-    callback_list.append(checkpoint)
+    callback_list.append(inference_checkpoint)  # save inference model
+    callback_list.append(full_checkpoint)       # save full model
+    callback_list.append(weights_ckpt)          # save ckpt
     callback_list.append(early_stop)
-    if not config['lr_decay']:
-        callback_list.append(reduce_lr)
     callback_list.append(tensorboard_log)
-    callback_list.append(throughput_monitor)  # 처리량 모니터링 추가
-    callback_list.append(custom_progress)  # 커스텀 진행률바 추가
-    callback_list.append(nan_monitor)  # NaN 모니터링 추가
+    callback_list.append(throughput_monitor)  # add throughput monitoring
+    callback_list.append(custom_progress)  # custom progress bar
+    callback_list.append(nan_monitor)  # add NaN monitoring
+    callback_list.append(csv_logger)  # add CSV logging
     return callback_list, early_stop
 
 
 def build_optimizer(config):
-    if config['lr_decay']:
+    # 학습률 스케줄링 설정
+    if config.get('lr_scheduler', {}).get('type') == 'cosine':
+        # Cosine Annealing with Warmup
         samples_per_epoch = get_actual_dataset_size(config)
-        steps_per_epoch = samples_per_epoch // config['batch_size']
+        batch_size = config['batch_size']
+        steps_per_epoch = samples_per_epoch // batch_size
         total_steps = config['epoch'] * steps_per_epoch
-        warmup_steps = total_steps // 10  # 10% warmup
-        
-        print(f"📊 Learning Rate Schedule:")
-        print(f"  Total steps: {total_steps}")
-        print(f"  Warmup steps: {warmup_steps}")
-        print(f"  Steps per epoch: {steps_per_epoch}")
-        
-        lr = tf.keras.optimizers.schedules.ExponentialDecay(
-            initial_learning_rate=config['lr'],
-            decay_steps=config['lr_decay_steps'],
-            decay_rate=config['lr_decay_rate'],
-            staircase=True
-        )
+
+        warmup_epochs = config['lr_scheduler'].get('warmup_epochs', 10)
+        warmup_steps = warmup_epochs * steps_per_epoch
+        min_lr = config['lr_scheduler'].get('min_lr', 1e-6)
+
+        print(f"  Cosine Annealing: warmup {warmup_epochs} epochs, min_lr {min_lr}")
+        print(f"  Total steps: {total_steps}, Warmup steps: {warmup_steps}")
+
+        # Debug version - let's print the values to understand what's happening
+        class CosineAnnealingSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
+            def __init__(self, initial_lr, warmup_steps, total_steps, min_lr):
+                super().__init__()
+                self.initial_lr = initial_lr
+                self.warmup_steps = warmup_steps
+                self.total_steps = total_steps
+                self.min_lr = min_lr
+
+            def __call__(self, step):
+                step = tf.cast(step, tf.float32)
+
+                # WARMUP PHASE
+                warmup_lr = self.initial_lr * tf.minimum(step / tf.cast(self.warmup_steps, tf.float32), 1.0)
+
+                # COSINE DECAY PHASE
+                decay_progress = tf.maximum(step - tf.cast(self.warmup_steps, tf.float32), 0.0)
+                decay_steps = tf.cast(self.total_steps - self.warmup_steps, tf.float32)
+                progress_ratio = decay_progress / decay_steps
+                progress_ratio = tf.clip_by_value(progress_ratio, 0.0, 1.0)
+
+                cosine_decay = 0.5 * (1.0 + tf.cos(tf.constant(3.14159, dtype=tf.float32) * progress_ratio))
+                cosine_lr = self.min_lr + (self.initial_lr - self.min_lr) * cosine_decay
+
+                # Use tf.cond for cleaner conditional logic
+                return tf.cond(
+                    step < tf.cast(self.warmup_steps, tf.float32),
+                    lambda: warmup_lr,
+                    lambda: cosine_lr
+                )
+
+            def get_config(self):
+                return {
+                    'initial_lr': self.initial_lr,
+                    'warmup_steps': self.warmup_steps,
+                    'total_steps': self.total_steps,
+                    'min_lr': self.min_lr
+                }
+
+            @classmethod
+            def from_config(cls, config):
+                return cls(**config)
+
+        lr = CosineAnnealingSchedule(config['lr'], warmup_steps, total_steps, min_lr)
     else:
         lr = config['lr']
 
-    opt_list = {
-        'Adam': 
-            tf.keras.optimizers.Adam(learning_rate=lr, clipnorm=0.5),
-        'SGD':
-            tf.keras.optimizers.SGD(learning_rate=lr,
-                momentum=0.9, nesterov=True, clipnorm=0.5),
-        'AdamW': 
-            tf.keras.optimizers.AdamW(learning_rate=lr, weight_decay=1e-4, clipnorm=0.5),
+    # optimizer defaults
+    optimizer_defaults = {
+        'Adam': {'lr': lr},
+        'SGD': {
+            'learning_rate': lr,
+            'momentum': 0.9,
+            'nesterov': True
+        },
+        'AdamW': {
+            'learning_rate': lr,
+            'weight_decay': 1e-4
+        },
     }
-    if config['optimizer'] not in opt_list:
-        print(config['optimizer'], 'is not support.')
-        print('please select one of below.')
-        print(opt_list.keys())
+
+    # apply user-defined parameters from config
+    optimizer_name = config['optimizer']
+    optimizer_params = optimizer_defaults.get(optimizer_name, {}).copy()
+
+    if 'optimizer_params' in config:
+        user_params = config['optimizer_params']
+        optimizer_params.update(user_params)
+
+    # create optimizer
+    opt_list = {
+        'Adam': tf.keras.optimizers.Adam,
+        'SGD': tf.keras.optimizers.SGD,
+        'AdamW': tf.keras.optimizers.AdamW,
+    }
+
+    if optimizer_name not in opt_list:
+        print(f"{optimizer_name} is not supported.")
+        print('Please select one of:', list(opt_list.keys()))
         exit(1)
-    return opt_list[config['optimizer']]
+
+    optimizer_class = opt_list[optimizer_name]
+    optimizer = optimizer_class(**optimizer_params)
+
+    print(f"  Optimizer: {optimizer_name} with params: {optimizer_params}")
+    return optimizer
 
 
 def restore_latest_checkpoint(net, checkpoint_path):
@@ -364,8 +364,10 @@ def restore_latest_checkpoint(net, checkpoint_path):
     if latest_path is not None:
         print('restore_latest_checkpoint:', latest_path)
         checkpoint.restore(latest_path).expect_partial()
+        print('✅ Full model (backbone + head) restored from latest checkpoint')
     else:
         print('Can not find latest checkpoint file:', checkpoint_path)
+        print('ℹ️  Using backbone only (head will be randomly initialized)')
     print('\n----------------------------------------------------\n')
 
 def start_training(config):
@@ -373,48 +375,39 @@ def start_training(config):
     os.environ['TF_GPU_THREAD_MODE'] = 'gpu_private'
     os.environ['TF_GPU_THREAD_COUNT'] = '1'
     
-    # 특정 GPU 선택
-    if config.get('selected_gpus') is not None:
-        strategy = setup_specific_gpu(config['selected_gpus'])
-    else:
-        strategy = setup_multi_gpu()
-    
+
     if config['mixed_precision']:
         print('---------------- Enabled Mixed Precision ----------------')
         policy = tf.keras.mixed_precision.Policy('mixed_float16')
         tf.keras.mixed_precision.set_global_policy(policy)
     tf.get_logger().setLevel('ERROR')
     
-    # 최적화된 배치 크기 계산
-    optimized_batch_size = get_optimized_batch_size(config, strategy)
-    
-    # 배치 크기 업데이트된 설정 생성
-    optimized_config = config.copy()
-    optimized_config['batch_size'] = optimized_batch_size
-        
-    if strategy:
-        with strategy.scope():
-            train_ds, test_ds_dict = build_dataset(optimized_config)
-            train_net = build_model(optimized_config)
-            opt = build_optimizer(optimized_config)
-            callbacks, early_stop = build_callbacks(optimized_config, test_ds_dict)
-            train_net.compile(optimizer=opt)
-    else:
-        train_ds, test_ds_dict = build_dataset(optimized_config)
-        train_net = build_model(optimized_config)
-        opt = build_optimizer(optimized_config)
-        callbacks, early_stop = build_callbacks(optimized_config, test_ds_dict)
-        train_net.compile(optimizer=opt)
+    # Build
+    train_ds, test_ds_dict = build_dataset(config)
+    train_net = build_model(config)
+    opt = build_optimizer(config)
+    callbacks, early_stop = build_callbacks(config, test_ds_dict)
+    train_net.compile(optimizer=opt)
     
     train_net.summary()
     
-    # steps_per_epoch 계산
-    samples_per_epoch = get_actual_dataset_size(optimized_config)
-    steps_per_epoch = samples_per_epoch // optimized_config['batch_size']
-    print(f"🚀 Epoch 1/{config['epoch']} - Steps per epoch: {steps_per_epoch}")
+    # calculate steps_per_epoch (round up to handle last batch)
+    samples_per_epoch = get_actual_dataset_size(config)
+    steps_per_epoch = (samples_per_epoch + config['batch_size'] - 1) // config['batch_size']
+    
+    # summarize training configuration (remove duplicates)
+    print(f"\n📊 Training Configuration:")
+    print(f"  Dataset: {samples_per_epoch:,} samples per epoch")
+    print(f"  Batch size: {config['batch_size']} (effective: {config['batch_size'] * config.get('num_grad_accum', 1)})")
+    print(f"  Steps per epoch: {steps_per_epoch}")
+    print(f"  Total epochs: {config['epoch']}")
+    print(f"  Learning rate: {config['lr']}")
+    print(f"  Optimizer: {config['optimizer']}")
+    print(f"  Loss: {config['loss']}")
+    print(f"  Mixed precision: {'Enabled' if config['mixed_precision'] else 'Disabled'}")
     
     try:
-        # verbose=0으로 설정하여 커스텀 진행률바가 출력을 대체
+        # set verbose=0 to replace custom progress bar
         train_net.fit(train_ds, epochs=config['epoch'], steps_per_epoch=steps_per_epoch, verbose=0, callbacks=callbacks)
     except KeyboardInterrupt:
         print('--')
@@ -424,9 +417,52 @@ def start_training(config):
             print('Training is canceled and weights are restored from the best')
             train_net.set_weights(early_stop.best_weights)
 
+    # save current model at the end of training (final model)
+    print("\n💾 Training completed - saving final model...")
+    
+    # create checkpoint directory
+    checkpoint_dir = f"./checkpoints/{config['model_name']}"
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    
+    # 1. save inference model (for TFLite conversion)
     infer_model = train_net.get_inference_model()
-    infer_model.save('{}.h5'.format(infer_model.name))
-    train_net.backbone.save('{}_backbone.h5'.format(train_net.name))
+    final_inference_path = os.path.join(checkpoint_dir, 'final_inference.keras')
+    infer_model.save(final_inference_path)
+    print(f"   ✅ Final inference model: {final_inference_path}")
+    
+    # 2. save full model (for resume training) - remove learning rate scheduler
+    final_full_path = os.path.join(checkpoint_dir, 'final_full.keras')
+    # remove learning rate scheduler and save (for TFLite conversion)
+    if train_net.optimizer is not None:
+        temp_lr_schedule = getattr(train_net.optimizer, '_learning_rate', None)
+        train_net.optimizer = None
+        train_net.save(final_full_path)
+        # do not restore learning rate scheduler (for TFLite conversion)
+    else:
+        train_net.save(final_full_path)
+    print(f"   ✅ Final full model: {final_full_path}")
+    
+    # 3. save backbone model (for separate use)
+    final_backbone_path = os.path.join(checkpoint_dir, 'final_backbone.keras')
+    train_net.backbone.save(final_backbone_path)
+    print(f"   ✅ Final backbone model: {final_backbone_path}")
+
+    # 4. save final ckpt
+    final_ckpt_dir = os.path.join(checkpoint_dir, 'ckpt')
+    os.makedirs(final_ckpt_dir, exist_ok=True)
+    final_ckpt = tf.train.Checkpoint(net=train_net)
+    save_path = final_ckpt.save(os.path.join(final_ckpt_dir, 'ckpt'))
+    print(f"   ✅ Final ckpt: {save_path}")
+    
+    print(f"\n📁 All models are saved: {checkpoint_dir}")
+    print(f"   - best_inference.keras (best performance inference model)")
+    print(f"   - best_full.keras (best performance full model)")
+    print(f"   - best_full_backbone.keras (best performance backbone model)")
+    print(f"   - final_inference.keras (final inference model)")
+    print(f"   - final_full.keras (final full model)")
+    print(f"   - final_backbone.keras (final backbone model)")
+    print(f"   - training_log.csv (training log)")
+    print(f"   - training_config.json (training config)")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='FFEM Training')

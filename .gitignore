@@ -3,5 +3,11 @@ checkpoint*
 logs*
 *.json
 *.h5
+*.pt
 *.tfrecord
 *.tflite
+*.keras
+*.csv
+*.jpg
+*.ipynb_checkpoints
+*.DS_Store

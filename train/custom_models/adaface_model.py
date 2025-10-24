@@ -1,36 +1,35 @@
-from train.layers.norm_aware_pooling_layer import NormAwarePoolingLayer
-from train.layers.angular_margin_layer import AngularMarginLayer
-from train.utils import GradientAccumulatorModel
-
 import tensorflow as tf
+from train.utils import GradientAccumulatorModel
+from train.layers.adaface_layer import AdaFaceLayer
+from train.layers.norm_aware_pooling_layer import NormAwarePoolingLayer
 
-
-@tf.keras.utils.register_keras_serializable()
-class AngularMarginModel(GradientAccumulatorModel):
-
+class AdaFaceModel(GradientAccumulatorModel):
     def __init__(self,
                  backbone,
                  n_classes,
                  embedding_dim=512,
-                 margin=0.5,
-                 scale=30,
+                 scale=30.0,
+                 margin=0.4,
+                 h=0.333,
                  num_grad_accum=1,
                  dropout_rate=0.1,
                  **kargs):
-        super(AngularMarginModel, self).__init__(num_accum=num_grad_accum, **kargs)
+        super(AdaFaceModel, self).__init__(num_accum=num_grad_accum, **kargs)
         self.backbone = backbone
         self.n_classes = n_classes
+        
+        # use NormAwarePoolingLayer
         self.feature_pooling = NormAwarePoolingLayer()
         self.fc1 = tf.keras.layers.Dense(embedding_dim,
             kernel_regularizer=tf.keras.regularizers.l2(5e-4))
         self.dropout = tf.keras.layers.Dropout(dropout_rate)
         self.batchnorm_final = tf.keras.layers.BatchNormalization()
-        self.angular_margin = AngularMarginLayer(n_classes, margin, scale)
+        self.adaface_layer = AdaFaceLayer(n_classes, scale, margin, h)
         self.loss_tracker = tf.keras.metrics.Mean(name='loss')
         self.acc_tracker = tf.keras.metrics.CategoricalAccuracy()
 
     def compile(self, **kargs):
-        super(AngularMarginModel, self).compile(**kargs)
+        super(AdaFaceModel, self).compile(**kargs)
 
     def call(self, inputs, training=False):
         if training:
@@ -40,7 +39,7 @@ class AngularMarginModel(GradientAccumulatorModel):
             embeddings = self.fc1(embeddings)
             embeddings = self.dropout(embeddings, training=True)
             embeddings = self.batchnorm_final(embeddings)
-            embeddings = self.angular_margin([embeddings, y_true])
+            embeddings = self.adaface_layer([embeddings, y_true])
         else:
             x = inputs
             features = self.backbone(x)
@@ -55,12 +54,12 @@ class AngularMarginModel(GradientAccumulatorModel):
         with tf.GradientTape() as tape:
             y_true = tf.one_hot(y_true, self.n_classes)
             y_pred = self([x, y_true], training=True)
-            probs = tf.nn.softmax(y_pred, axis=1)
-            total_loss = tf.keras.losses.categorical_crossentropy(y_true, probs)
+            total_loss = tf.keras.losses.categorical_crossentropy(y_true, y_pred, from_logits=True)
             total_loss = tf.math.reduce_mean(total_loss)
         grads = tape.gradient(total_loss, self.trainable_variables)
         self.accumulate_grads_and_apply(grads)
         self.loss_tracker.update_state(total_loss)
+        probs = tf.nn.softmax(y_pred, axis=1)
         self.acc_tracker.update_state(y_true, probs)
         return {'loss': self.loss_tracker.result(),
             'accuracy': self.acc_tracker.result()}
@@ -71,12 +70,13 @@ class AngularMarginModel(GradientAccumulatorModel):
 
     def get_config(self):
         """return model config"""
-        config = super(AngularMarginModel, self).get_config()
+        config = super(AdaFaceModel, self).get_config()
         config.update({
             'n_classes': self.n_classes,
             'embedding_dim': self.fc1.units,
-            'margin': self.angular_margin.margin,
-            'scale': self.angular_margin.scale,
+            'scale': self.adaface_layer.scale,
+            'margin': self.adaface_layer.margin,
+            'h': self.adaface_layer.h,
             'num_grad_accum': int(self.num_accum),  # convert to integer
             'dropout_rate': self.dropout.rate,
         })
@@ -84,9 +84,7 @@ class AngularMarginModel(GradientAccumulatorModel):
         if self.backbone is not None:
             config['backbone_config'] = self.backbone.get_config()
             # save backbone weight (serializable format)
-            # get_weights() returns numpy array list
             backbone_weights = self.backbone.get_weights()
-            # convert numpy array to list for serialization
             config['backbone_weights'] = [w.tolist() if hasattr(w, 'tolist') else w for w in backbone_weights]
         return config
     
@@ -129,8 +127,9 @@ class AngularMarginModel(GradientAccumulatorModel):
         default_config = {
             'n_classes': 26,
             'embedding_dim': 512,
-            'margin': 0.5,
-            'scale': 30,
+            'scale': 30.0,
+            'margin': 0.4,
+            'h': 0.333,
             'num_grad_accum': 1,
             'dropout_rate': 0.1,
         }
@@ -145,14 +144,19 @@ class AngularMarginModel(GradientAccumulatorModel):
         return model
 
     def get_inference_model(self):
+        """create inference model"""
         x = self.backbone.inputs[0]
         y = self.backbone.outputs[0]
         y = self.feature_pooling(y)
         y = self.fc1(y)
-        # y = self.dropout(y, training=False)
+        y = self.dropout(y, training=False)
         y = self.batchnorm_final(y)
         
-        # # L2 normalization
-        # y = tf.keras.layers.Lambda(lambda x: tf.nn.l2_normalize(x, axis=1), name='l2_normalize')(y)
         
-        return tf.keras.Model(x, y, name='{}_embedding'.format(self.name))
+        inference_model = tf.keras.Model(x, y, name='{}_embedding'.format(self.name))
+        
+        # model optimization setting
+        inference_model.compile(optimizer='adam')  # not needed for inference, but needed for TFLite conversion
+        
+        return inference_model
+    

@@ -111,8 +111,12 @@ def cutout(x: tf.Tensor):
     return tf.cond(choice > 0.5, lambda: _cutout_batch(x), lambda: x)
 
 
-def make_tfdataset(train_tfrecord, test_tfrecord, batch_size, img_shape):
-    train_ds = tf.data.TFRecordDataset(train_tfrecord)
+def make_tfdataset(train_tfrecord, test_tfrecord, batch_size, img_shape, shuffle_buffer_size=None, global_shuffle_cfg=None):
+    # train_tfrecord can be single path or list of paths
+    if isinstance(train_tfrecord, (list, tuple)):
+        train_ds = tf.data.TFRecordDataset(list(train_tfrecord))
+    else:
+        train_ds = tf.data.TFRecordDataset(train_tfrecord)
 
     def _read_tfrecord(serialized):
         description = {
@@ -170,9 +174,52 @@ def make_tfdataset(train_tfrecord, test_tfrecord, batch_size, img_shape):
         return x / 255.
 
     train_ds = train_ds.map(_read_tfrecord)
-    train_ds = train_ds.shuffle(10000)
+
+    # Optional global shuffle: load all records into memory then shuffle
+    if global_shuffle_cfg and global_shuffle_cfg.get('enabled', False):
+        seed = int(global_shuffle_cfg.get('seed', 42))
+        # collect all samples into memory (warning: may use large memory for big datasets)
+        def _collect_to_tensor(ds):
+            images = []
+            labels = []
+            boxes = []
+            for img, lab, box in ds:
+                images.append(img)
+                labels.append(lab)
+                boxes.append(box)
+            return images, labels, boxes
+
+        images, labels, boxes = _collect_to_tensor(train_ds)
+        # Python-side shuffle with seed
+        import random
+        random.seed(seed)
+        idx = list(range(len(images)))
+        random.shuffle(idx)
+        images = [images[i] for i in idx]
+        labels = [labels[i] for i in idx]
+        boxes = [boxes[i] for i in idx]
+        train_ds = tf.data.Dataset.from_tensor_slices((images, labels, boxes))
+    
+    # shuffle buffer size setting
+    if shuffle_buffer_size is None:
+        # default: 1000 times of batch size
+        shuffle_buffer_size = batch_size * 1000
+    elif shuffle_buffer_size == 'auto':
+        # automatic calculation: 1% of dataset size (maximum 500,000)
+        # actual dataset size is calculated and passed from main.py
+        shuffle_buffer_size = min(500000, batch_size * 1000)
+    
+    print(f"📊 Shuffle buffer size: {shuffle_buffer_size:,} samples")
+    
+    # shuffle
+    train_ds = train_ds.shuffle(shuffle_buffer_size)
+    
     train_ds = train_ds.map(_load_and_preprocess_image, num_parallel_calls=TF_AUTOTUNE)
     train_ds = train_ds.map(_random_crop, num_parallel_calls=TF_AUTOTUNE)
+    
+    # second shuffle: shuffle after preprocessing (increase diversity within batch)
+    train_ds = train_ds.shuffle(batch_size * 100)
+    
     train_ds = train_ds.batch(batch_size)
     train_ds = train_ds.map(lambda img, label : (_normalize(img), label), num_parallel_calls=TF_AUTOTUNE)
     augmentations = [random_flip, random_color]

@@ -1,0 +1,32 @@
+# model_path: checkpoints/ResNet50_adaface_251001_2/best_inference_56.tflite
+# model_path: checkpoints/ResNet50_adaface_251001_2/best_inference_77.tflite
+model_path: checkpoints/ResNet50_adaface_251015_2/best_inference_39.tflite
+
+# test_file: /notebooks/datasets/face/vggface2/vggface2_test.tfrecord
+test_file: /notebooks/datasets/face/lfw/lfw_verified_250911_augmented_corrected.tfrecord
+# test_file: /notebooks/datasets/face/custom_250915_aligned/custom_250915_augged.tfrecord
+
+k_list: [1, 5]
+# k_list: [1]
+
+metric: cos
+norm: true
+
+visualize: true
+# save_dir: 'aaa_251010_epoch77_vggface2_test_1'
+save_dir: 'aaa_251015_2_epoch39_lfw_verified_250911_augmented_corrected_1'
+# save_dir: 'aaa_251010_epoch56_custom_250915_augged_1'
+max_samples: 100
+
+score_method: linear
+include_security: true
+threshold: 0.8
+progress: true
+
+comprehensive: true
+comprehensive_skip_accuracy: true
+threshold_mode: 'eer'
+eer_sample_ratio: 1.0
+eer_use_sampling: true
+tta_flip: false
+tta_avg: false

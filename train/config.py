@@ -32,7 +32,8 @@ config = {
     # Restore weights of backbone network.
     # It restores only weights of backbone network.
     #
-    'saved_backbone': '',
+    # 'saved_backbone': '',
+    'saved_backbone': './checkpoints/ResNet50_arcface_251001_2/best_full_backbone.keras',
 
     #
     # The checkpoint option is different from saved_backbone option.
@@ -40,6 +41,7 @@ config = {
     # So it overrides the weights of saved_backbone with the weights in checkpoint if you feed both options.
     # The path should indicate a directory containing checkpoint files.
     #
+    # 'checkpoint': './checkpoints/ResNet50_adaface_251001_2/ckpt/',
     'checkpoint': '',
 
     'batch_size' : 256,
@@ -67,6 +69,8 @@ config = {
     # 1. SoftmaxCenter (known as Center Loss)
     # 2. AngularMargin (known as ArcFace)
     # 3. GroupAware (known as GroupFace)
+    # 4. CosFace (known as AM-LFC)
+    # 5. AdaFace (known as AM-LFS)
     #
     'loss': 'AngularMargin',
     'loss_param':{
@@ -84,6 +88,15 @@ config = {
             'num_groups': 4,
             'intermidiate_dim': 256,
             'group_loss_weight': 0.1
+        },
+        'CosFace':{
+            'scale': 60,
+            'margin': 0.35
+        },
+        'AdaFace':{
+            'scale': 75,
+            'margin': 0.5,
+            'h': 0.4
         }
     },
 
@@ -107,12 +120,23 @@ config = {
     'lr' : 1e-4,
 
     #
-    # lr * decay_rate ^ (steps / decay_steps)
+    # SGD optimizer settings (optimized for large dataset)
     #
-    'lr_decay': False,
-    'lr_decay_steps' : 10000,
-    'lr_decay_rate' : 0.9,
+    'optimizer_params': {
+        'momentum': 0.9,
+        'nesterov': True,
+        'weight_decay': 5e-4
+    },
 
+    #
+    # learning rate scheduling (Cosine Annealing + Warmup)
+    #
+    'lr_scheduler': {
+        'type': 'cosine',  # cosine annealing with warmup
+        'warmup_epochs': 10,  # warmup 10 epochs
+        'min_lr': 1e-6,  # minimum learning rate
+        'T_max': None  # total epochs (automatically calculated)
+    },
 
     #
     # training dataset generated from generate_tfrecord/main.py
@@ -124,15 +148,32 @@ config = {
     #
     # Set maximum face ID in 'tfrecord_file'.
     #
-    'num_identity': 4000,
-    
-    # 멀티 GPU 설정
-    'multi_gpu': True,  # 멀티 GPU 사용 여부 (자동 감지)
-    'gpu_memory_growth': True,  # GPU 메모리 증가 허용
-    
-    # 특정 GPU 선택 (None이면 모든 GPU 사용)
-    'selected_gpus': None,  # 예: "0,1" 또는 [0, 1] 또는 0
-    
-    # 처리량 모니터링 설정 (자동 계산으로 변경)
-    'estimated_total_samples': None,  # None으로 설정하면 자동으로 실제 데이터셋 크기를 계산
+    'num_identity': 111182,
+
+    # global shuffle option - completely random shuffle
+    'global_shuffle': {
+        'enabled': False,
+        'seed': 42
+    },
+
+    # shuffle buffer size setting
+    'shuffle_buffer_size': 10000,  # shuffle buffer size
+    # options:
+    # - None: automatically set to batch_size * 1000 (256 * 1000 = 256,000)
+    # - integer: directly specify (e.g. 10000, 100000, 500000)
+    # - 'auto': 1% of dataset size (maximum 500,000)
+    #
+    # usage examples:
+    # 'shuffle_buffer_size': None,        # automatically set (recommended)
+    # 'shuffle_buffer_size': 100000,      # medium size
+    # 'shuffle_buffer_size': 500000,      # large dataset
+    # 'shuffle_buffer_size': 'auto',      # 1% of dataset size
+    #
+    # memory usage reference:
+    # - 100,000: approximately 1.5GB GPU memory usage
+    # - 500,000: approximately 7.5GB GPU memory usage
+    # - 1,000,000: approximately 15GB GPU memory usage
+
+    # throughput monitoring: per-epoch sample count (if <=0, automatically count from actual dataset size)
+    'total_samples': 6122484,
 }

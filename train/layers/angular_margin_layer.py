@@ -44,42 +44,21 @@ class AngularMarginLayer(tf.keras.layers.Layer):
         """
         y_pred, y_true = inputs
         
-        current_dtype = y_pred.dtype
-        center = tf.cast(self.center, current_dtype)
-        
-        cos_m = tf.cast(self.cos_m, current_dtype)
-        sin_m = tf.cast(self.sin_m, current_dtype)
-        th = tf.cast(self.th, current_dtype)
-        mm = tf.cast(self.mm, current_dtype)
-        
-        if current_dtype == tf.float16:
-            y_pred = tf.cast(y_pred, tf.float32)
-            center = tf.cast(center, tf.float32)
-            cos_m = tf.cast(cos_m, tf.float32)
-            sin_m = tf.cast(sin_m, tf.float32)
-            th = tf.cast(th, tf.float32)
-            mm = tf.cast(mm, tf.float32)
         
         normed_embds = tf.nn.l2_normalize(y_pred, axis=1)
-        normed_w = tf.nn.l2_normalize(center, axis=0)
+        normed_w = tf.nn.l2_normalize(self.center, axis=0)
         
         cos_t = tf.matmul(normed_embds, normed_w)
         
-        # 더 보수적인 clipping
-        cos_t = tf.clip_by_value(cos_t, -0.999, 0.999)
         
-        sin_t_squared = 1.0 - cos_t * cos_t
-        sin_t_squared = tf.clip_by_value(sin_t_squared, 1e-6, 1.0)
-        sin_t = tf.sqrt(sin_t_squared)
+        sin_t = tf.sqrt(1. - cos_t ** 2)
         
-        cos_mt = cos_t * cos_m - sin_t * sin_m
-        cos_mt = tf.where(cos_t > th, cos_mt, cos_t - mm)
+        cos_mt = cos_t * self.cos_m - sin_t * self.sin_m
+        cos_mt = tf.where(cos_t > self.th, cos_mt, cos_t - self.mm)
         
         logits = tf.where(y_true == 1., cos_mt, cos_t)
         logits = logits * self.scale
         
-        if current_dtype == tf.float16:
-            logits = tf.cast(logits, current_dtype)
         
         return logits
 
